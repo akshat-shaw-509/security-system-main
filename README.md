@@ -1,0 +1,58 @@
+# Smart Security System
+
+End-to-end smart home dashboard with a FastAPI backend, React frontend, and HTTP device integration for hardware telemetry and control.
+
+## Quick start
+
+### 1. Backend (port 8001)
+
+```bash
+pip install -r requirements.txt
+python -m uvicorn app.main:app --reload --port 8001
+```
+
+Copy `.env.example` to `.env` and adjust SMTP settings if you use password reset.
+
+### 2. Frontend (port 5173)
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open http://localhost:5173 — register, then sign in.
+
+### 3. Hardware / simulator
+
+After registering a device in the UI, copy `device_uid` and `device_token` into `device_simulator.py` (or your firmware), then:
+
+```bash
+python device_simulator.py
+```
+
+The device loop should call:
+
+- `POST /devices/heartbeat`
+- `POST /devices/telemetry` (temperature, humidity, motion, **power_w**, energy_wh)
+- `POST /devices/commands` → execute → `POST /devices/commands/{id}/complete`
+
+## Main API surface
+
+| Endpoint | Purpose |
+|----------|---------|
+| `POST /register`, `POST /login` | User auth |
+| `POST /devices/register` | Pair a new device |
+| `POST /devices/telemetry` | Hardware readings |
+| `POST /devices/{id}/command` | Control from dashboard |
+| `GET /energy/summary` | Live energy aggregates |
+| `GET /rooms`, `POST /rooms` | Room management |
+| `GET /dashboard` | Rooms, devices, temperatures |
+| `WS /ws` | Real-time events |
+
+## Production notes
+
+- Serve the built frontend (`npm run build`) behind nginx with `/api` and `/ws` proxied to FastAPI.
+- Send `power_w` from meters/relays for accurate Energy page readings; without it, usage is estimated from device on/off state.
+- Set `SMART_HOME_SMS_WEBHOOK_URL` to an SMS provider webhook to send phone alerts for motion/security events and failed login attempts.
+- Set `SMART_HOME_TELEGRAM_BOT_TOKEN` and `SMART_HOME_TELEGRAM_CHAT_ID` to receive the same alerts in Telegram.

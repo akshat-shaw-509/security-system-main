@@ -1,0 +1,40 @@
+INFO:     Will watch for changes in these directories: ['C:\\Users\\Akshat\\Desktop\\Smart-security-system-main']
+INFO:     Uvicorn running on http://127.0.0.1:8001 (Press CTRL+C to quit)
+INFO:     Started reloader process [22616] using WatchFiles
+WARNING:  WatchFiles detected changes in 'app\models.py'. Reloading...
+Traceback (most recent call last):
+  File "<frozen runpy>", line 203, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\Users\Akshat\AppData\Roaming\Python\Python314\site-packages\uvicorn\__main__.py", line 4, in <module>
+    uvicorn.main()
+    ~~~~~~~~~~~~^^
+  File "C:\Users\Akshat\AppData\Roaming\Python\Python314\site-packages\click\core.py", line 1524, in __call__
+    return self.main(*args, **kwargs)
+           ~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\Akshat\AppData\Roaming\Python\Python314\site-packages\click\core.py", line 1445, in main
+    rv = self.invoke(ctx)
+  File "C:\Users\Akshat\AppData\Roaming\Python\Python314\site-packages\click\core.py", line 1308, in invoke
+    return ctx.invoke(self.callback, **ctx.params)
+           ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Akshat\AppData\Roaming\Python\Python314\site-packages\click\core.py", line 877, in invoke
+    return callback(*args, **kwargs)
+  File "C:\Users\Akshat\AppData\Roaming\Python\Python314\site-packages\uvicorn\main.py", line 441, in main
+    run(
+    ~~~^
+        app,
+        ^^^^
+    ...<48 lines>...
+        reset_contextvars=reset_contextvars,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\Akshat\AppData\Roaming\Python\Python314\site-packages\uvicorn\main.py", line 615, in run
+    ChangeReload(config, target=server.run, sockets=[sock]).run()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Akshat\AppData\Roaming\Python\Python314\site-packages\uvicorn\supervisors\basereload.py", line 59, in run
+    self.restart()
+    ~~~~~~~~~~~~^^
+  File "C:\Users\Akshat\AppData\Roaming\Python\Python314\site-packages\uvicorn\supervisors\basereload.py", line 91, in restart
+    os.kill(self.process.pid, signal.CTRL_C_EVENT)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: [WinError 6] The handle is invalid
