@@ -5196,11 +5196,54 @@ textarea {
   background: #dbe5f2;
 }
 
-.security-camera-frame img {
+.security-camera-frame img,
+.security-camera-frame video {
   display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.security-camera-offline {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 24px;
+  text-align: center;
+  color: #52617f;
+  background: linear-gradient(135deg, #eef4ff, #f8fbff);
+}
+
+.security-camera-offline svg {
+  width: 42px;
+  height: 42px;
+  color: #1764ff;
+}
+
+.security-camera-offline strong {
+  color: #06123a;
+  font-size: 18px;
+}
+
+.security-camera-offline span {
+  max-width: 320px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.security-camera-offline button {
+  min-height: 36px;
+  padding: 0 16px;
+  border-radius: 999px;
+  background: #1764ff;
+  color: #ffffff;
+  cursor: pointer;
+  font-weight: 900;
 }
 
 .security-camera-frame::after {
@@ -5228,6 +5271,31 @@ textarea {
 }
 
 .security-live-badge::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #ffffff;
+}
+
+.security-recording-badge {
+  position: absolute;
+  z-index: 1;
+  top: 16px;
+  right: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+  padding: 0 12px;
+  border-radius: 7px;
+  background: #ff8a00;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.security-recording-badge::before {
   content: "";
   width: 7px;
   height: 7px;
@@ -5270,6 +5338,10 @@ textarea {
 }
 
 .security-camera-picker button {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   min-height: 32px;
   padding: 0 12px;
   border: 1px solid #dfe6f2;
@@ -5281,10 +5353,124 @@ textarea {
   font-weight: 850;
 }
 
+.security-camera-picker button small {
+  color: inherit;
+  font-size: 10px;
+  font-weight: 800;
+  opacity: 0.72;
+  text-transform: uppercase;
+}
+
 .security-camera-picker button.active {
   border-color: #1764ff;
   background: #eef4ff;
   color: #1764ff;
+}
+
+.security-camera-picker button.security-webcam-add {
+  border-style: dashed;
+  color: #1764ff;
+}
+
+.security-camera-picker > span {
+  color: #52617f;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.security-media-card {
+  min-height: 240px;
+}
+
+.security-snapshot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: 12px;
+}
+
+.security-snapshot-grid article {
+  overflow: hidden;
+  border: 1px solid #dfe6f2;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.security-snapshot-grid img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  background: #dbe5f2;
+}
+
+.security-snapshot-grid strong,
+.security-snapshot-grid span {
+  display: block;
+  padding: 0 10px;
+}
+
+.security-snapshot-grid strong {
+  margin-top: 8px;
+  color: #06123a;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.security-snapshot-grid span {
+  padding-bottom: 10px;
+  color: #52617f;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.security-recording-list {
+  display: grid;
+  gap: 10px;
+}
+
+.security-recording-list article {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid #dfe6f2;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.security-recording-list strong,
+.security-recording-list span,
+.security-recording-list small {
+  display: block;
+}
+
+.security-recording-list strong {
+  color: #06123a;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.security-recording-list span,
+.security-recording-list small {
+  color: #52617f;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.security-recording-list button {
+  min-height: 34px;
+  padding: 0 13px;
+  border-radius: 999px;
+  background: #eef4ff;
+  color: #1764ff;
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.security-recording-list button:disabled {
+  cursor: default;
+  opacity: 0.48;
 }
 
 .security-sensors-card {
@@ -8150,6 +8336,17 @@ body.smart-home-dark-mode .energy-reference-page {
   max-width: 260px;
   font-size: 13px;
   line-height: 1.5;
+}
+
+.green-dot.offline {
+  background: #ef4444;
+}
+
+.camera-caption-stack {
+  justify-content: flex-start;
+  gap: 10px;
+  margin-top: 6px;
+  color: #52617f;
 }
 
 .room-summary-card small i.offline {

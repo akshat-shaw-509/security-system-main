@@ -9,7 +9,7 @@ import {
 } from "react";
 import Chart from "chart.js/auto";
 import { api, authHeaders } from "../api/client.js";
-import { BACKEND_PORT, WS_URL } from "../api/config.js";
+import { API_BASE, BACKEND_PORT, WS_URL } from "../api/config.js";
 import {
   commandTypeFromSpeech,
   findBestDevice,
@@ -20,9 +20,8 @@ import { buildRoomEntries, normalizeDashboard } from "../utils/energyUtils.js";
 
 const AppContext = createContext(null);
 
-const KNOWN_PEOPLE_KEY = "smart_home_known_people";
 const TOKEN_KEY = "smart_home_token";
-const EVENTS_KEY = "smart_home_live_feed";
+const PROVISIONING_LOG_KEY = "smart_home_provisioning_log";
 const EVENT_RETENTION_MS = 72 * 60 * 60 * 1000;
 const REFRESH_COOLDOWN_MS = 5000;
 
@@ -31,14 +30,37 @@ function pruneEvents(items) {
   return items.filter((item) => new Date(item.time).getTime() >= cutoff);
 }
 
-function loadStoredEvents() {
+function loadProvisioningLog() {
   try {
-    return pruneEvents(JSON.parse(localStorage.getItem(EVENTS_KEY) || "[]"));
+    const saved = JSON.parse(localStorage.getItem(PROVISIONING_LOG_KEY) || "[]");
+    return Array.isArray(saved) ? saved : [];
   } catch {
-    localStorage.removeItem(EVENTS_KEY);
+    localStorage.removeItem(PROVISIONING_LOG_KEY);
     return [];
   }
 }
+
+function persistProvisioningLog(items) {
+  try {
+    localStorage.setItem(PROVISIONING_LOG_KEY, JSON.stringify(items));
+  } catch {
+    // The one-time credentials modal should still render if storage is blocked.
+  }
+}
+
+const DEFAULT_SETTINGS = {
+  home_name: "",
+  location: "",
+  temperature_unit: "C",
+  timezone: "Asia/Kolkata",
+  language: "en",
+  dark_mode: true,
+  auto_update: true,
+  system_alerts: true,
+  security_alerts: true,
+  voice_feedback: true,
+  dashboard_preferences: {},
+};
 
 export function AppProvider({ children }) {
   const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY));
@@ -47,15 +69,23 @@ export function AppProvider({ children }) {
   const [devices, setDevices] = useState([]);
   const [espModules, setEspModules] = useState([]);
   const [dashboard, setDashboard] = useState({});
+  const [cameras, setCameras] = useState([]);
+  const [cameraSnapshots, setCameraSnapshots] = useState([]);
+  const [cameraRecordings, setCameraRecordings] = useState([]);
   const [scenes, setScenes] = useState([]);
+  const [schedules, setSchedules] = useState([]);
   const [rules, setRules] = useState([]);
   const [commandsByDevice, setCommandsByDevice] = useState({});
-  const [events, setEvents] = useState(loadStoredEvents);
+  const [events, setEvents] = useState([]);
   const [alerts, setAlerts] = useState(0);
-  const [knownPeople, setKnownPeople] = useState(() =>
-    JSON.parse(localStorage.getItem(KNOWN_PEOPLE_KEY) || "[]"),
-  );
-  const [provisioningLog, setProvisioningLog] = useState([]);
+  const [knownPeople, setKnownPeople] = useState([]);
+  const [userSettings, setUserSettings] = useState(DEFAULT_SETTINGS);
+  const [userProfile, setUserProfile] = useState(null);
+  const [notifications, setNotifications] = useState([]);
+  // Provisioning log – persisted across page refreshes for the current session
+  const [provisioningLog, setProvisioningLog] = useState(loadProvisioningLog);
+  // Modal state – non-null while the one-time credentials modal should be open
+  const [provisioningModal, setProvisioningModal] = useState(null);
   const [toasts, setToasts] = useState([]);
 
   const [backendStatus, setBackendStatus] = useState("checking");
@@ -99,12 +129,14 @@ export function AppProvider({ children }) {
     socket.close();
   }, []);
 
-  const toast = useCallback((message) => {
+  const toast = useCallback((message, type = "info") => {
     const id = `${Date.now()}-${Math.random()}`;
-    setToasts((prev) => [...prev, { id, message }]);
+    setToasts((prev) => [...prev, { id, message, type }]);
+    // success lingers a bit longer; errors stay until read; info is default
+    const duration = type === "success" ? 4500 : type === "error" ? 6000 : 3600;
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 3600);
+    }, duration);
   }, []);
 
   const addEvent = useCallback((eventData) => {
@@ -113,11 +145,11 @@ export function AppProvider({ children }) {
         { time: new Date().toISOString(), data: eventData },
         ...prev,
       ]).slice(0, 100);
-      localStorage.setItem(EVENTS_KEY, JSON.stringify(next));
       return next;
     });
     if (
       eventData.event === "rule_triggered" ||
+      eventData.event === "motion_detected" ||
       (eventData.event === "telemetry" && eventData.motion_detected)
     ) {
       setAlerts((a) => a + 1);
@@ -181,6 +213,52 @@ export function AppProvider({ children }) {
     setDashboard(normalizeDashboard(data));
   }, [token]);
 
+  const loadCameras = useCallback(async (authToken = token) => {
+    if (!authToken) return [];
+    const data = await api("/cameras", { headers: authHeaders(authToken) });
+    setCameras(data);
+    return data;
+  }, [token]);
+
+  const loadCameraSnapshots = useCallback(async (authToken = token) => {
+    if (!authToken) return [];
+    const data = await api("/cameras/snapshots/recent?limit=12", {
+      headers: authHeaders(authToken),
+    });
+    setCameraSnapshots(data);
+    return data;
+  }, [token]);
+
+  const loadCameraRecordings = useCallback(async (authToken = token) => {
+    if (!authToken) return [];
+    const data = await api("/cameras/recordings/recent?limit=12", {
+      headers: authHeaders(authToken),
+    });
+    setCameraRecordings(data);
+    return data;
+  }, [token]);
+
+  const cameraMediaUrl = useCallback((path) => {
+    if (!path || !token) return "";
+    const separator = path.includes("?") ? "&" : "?";
+    return `${API_BASE}${path}${separator}access_token=${encodeURIComponent(token)}`;
+  }, [token]);
+
+  const cameraStreamUrl = useCallback(
+    (camera) => cameraMediaUrl(camera?.stream_path),
+    [cameraMediaUrl],
+  );
+
+  const cameraSnapshotUrl = useCallback(
+    (item) => cameraMediaUrl(item?.image_path || item?.snapshot_path),
+    [cameraMediaUrl],
+  );
+
+  const cameraRecordingUrl = useCallback(
+    (recording) => cameraMediaUrl(recording?.recording_path),
+    [cameraMediaUrl],
+  );
+
   const loadEnergySummary = useCallback(async (range = "today", authToken = token, options = {}) => {
     if (!authToken) return null;
     try {
@@ -216,6 +294,14 @@ export function AppProvider({ children }) {
     setScenes(data);
   }, [token]);
 
+  const loadSchedules = useCallback(async (authToken = token) => {
+    if (!authToken) return [];
+    const data = await api("/schedules", { headers: authHeaders(authToken) });
+    const items = data.schedules || [];
+    setSchedules(items);
+    return items;
+  }, [token]);
+
   const loadRules = useCallback(async () => {
     if (!token) return;
     const data = await api("/rules", { headers: authHeaders(token) });
@@ -238,7 +324,6 @@ export function AppProvider({ children }) {
     const data = await api("/events?limit=100", { headers: authHeaders(authToken) });
     const normalized = normalizeBackendEvents(data);
     setEvents(normalized);
-    localStorage.setItem(EVENTS_KEY, JSON.stringify(normalized));
   }, [token, normalizeBackendEvents]);
 
   const loadCurrentUser = useCallback(async (authToken = token) => {
@@ -316,23 +401,51 @@ export function AppProvider({ children }) {
         if (!currentUser) {
           loadCurrentUser(authToken).catch(() => null);
         }
-        const [deviceData, espData, dashboardData, sceneData, ruleData, eventData] = await Promise.all([
+        const [
+          deviceData,
+          espData,
+          dashboardData,
+          cameraData,
+          snapshotData,
+          recordingData,
+          sceneData,
+          scheduleData,
+          ruleData,
+          eventData,
+          settingsData,
+          profileData,
+          knownPeopleData,
+          notificationsData,
+          provisioningHistoryData,
+        ] = await Promise.all([
           api("/devices", { headers }),
           api("/esp/modules", { headers }),
           api("/dashboard", { headers }),
+          api("/cameras", { headers }),
+          api("/cameras/snapshots/recent?limit=12", { headers }),
+          api("/cameras/recordings/recent?limit=12", { headers }),
           api("/scenes", { headers }),
+          api("/schedules", { headers }),
           api("/rules", { headers }),
           api("/events?limit=100", { headers }),
+          api("/settings", { headers }).catch(() => null),
+          api("/profiles", { headers }).catch(() => null),
+          api("/known-people", { headers }).catch(() => null),
+          api("/notifications", { headers }).catch(() => null),
+          api("/provisioning/history", { headers }).catch(() => null),
         ]);
         setDevices(deviceData);
         setEspModules(espData);
         setDashboard(normalizeDashboard(dashboardData));
+        setCameras(cameraData);
+        setCameraSnapshots(snapshotData);
+        setCameraRecordings(recordingData);
         await loadEnergySummary("today", authToken);
         setScenes(sceneData);
+        setSchedules(scheduleData.schedules || []);
         setRules(ruleData);
         const normalizedEvents = normalizeBackendEvents(eventData);
         setEvents(normalizedEvents);
-        localStorage.setItem(EVENTS_KEY, JSON.stringify(normalizedEvents));
         await loadCommandStatus(deviceData, authToken);
         const selectedDeviceId =
           telemetryDeviceId || (deviceData[0] ? String(deviceData[0].device_id) : "");
@@ -369,38 +482,24 @@ export function AppProvider({ children }) {
           `/devices/${deviceId}/command?command_type=${encodeURIComponent(commandType)}`,
           { method: "POST", headers: authHeaders(token) },
         );
-        const nextState = data.state || (commandType === "TURN_ON" ? "ON" : "OFF");
+        // Update presence fields only — do NOT flip device.state here.
+        // The actual state change happens exclusively inside the command_completed
+        // WebSocket event, once the ESP/hardware confirms execution.
         const hasOnlineStatus = Object.prototype.hasOwnProperty.call(data, "is_online");
-        const nextOnline = hasOnlineStatus ? Boolean(data.is_online) : commandType === "TURN_ON";
-        const nextPresence = {
-          state: nextState,
-          is_online: nextOnline,
-          presence_label: data.presence_label || (nextOnline ? "Live now" : "Offline"),
-          presence_age_seconds: data.presence_age_seconds ?? 0,
-          last_seen: data.last_seen || new Date().toISOString(),
+        const isOnline = hasOnlineStatus ? Boolean(data.is_online) : undefined;
+        const presenceUpdate = {
+          ...(isOnline !== undefined && { is_online: isOnline }),
+          ...(data.presence_label && { presence_label: data.presence_label }),
+          ...(data.presence_age_seconds != null && { presence_age_seconds: data.presence_age_seconds }),
+          ...(data.last_seen && { last_seen: data.last_seen }),
         };
-        setDevices((prev) =>
-          prev.map((device) =>
-            device.device_id === deviceId
-              ? { ...device, ...nextPresence }
-              : device,
-          ),
-        );
-        setDashboard((prev) =>
-          Object.fromEntries(
-            Object.entries(normalizeDashboard(prev)).map(([room, roomData]) => [
-              room,
-              {
-                ...roomData,
-                devices: roomData.devices.map((device) =>
-                  device.device_id === deviceId
-                    ? { ...device, ...nextPresence }
-                    : device,
-                ),
-              },
-            ]),
-          ),
-        );
+        if (Object.keys(presenceUpdate).length) {
+          setDevices((prev) =>
+            prev.map((device) =>
+              device.device_id === deviceId ? { ...device, ...presenceUpdate } : device,
+            ),
+          );
+        }
         setCommandsByDevice((prev) => ({
           ...prev,
           [deviceId]: [
@@ -420,13 +519,23 @@ export function AppProvider({ children }) {
           command_type: commandType,
           response: data,
         });
-        toast(`${commandType} sent`);
-        await refreshAll(token, { force: true });
+        const actionLabel = commandType === "TURN_ON" ? "Turn On" : "Turn Off";
+        if (isOnline === false) {
+          toast(
+            `${actionLabel} queued — device is offline. Will execute when it reconnects.`,
+            "warning",
+          );
+        } else {
+          toast(
+            `${actionLabel} sent — waiting for hardware to confirm...`,
+            "info",
+          );
+        }
       } catch (error) {
-        toast(error.message);
+        toast(error.message, "error");
       }
     },
-    [token, addEvent, toast, refreshAll],
+    [token, addEvent, toast],
   );
 
   const runScene = useCallback(
@@ -437,10 +546,14 @@ export function AppProvider({ children }) {
           headers: authHeaders(token),
         });
         addEvent({ event: `${source}_scene_run`, scene_id: sceneId, response: data });
-        toast("Scene started");
+        const count = data.commands?.length || 0;
+        toast(
+          `Scene activated — ${count} command${count === 1 ? "" : "s"} queued. Waiting for device${count === 1 ? "" : "s"} to confirm.`,
+          "info",
+        );
         await refreshAll(token, { force: true });
       } catch (error) {
-        toast(error.message);
+        toast(error.message, "error");
       }
     },
     [token, addEvent, toast, refreshAll],
@@ -505,11 +618,108 @@ export function AppProvider({ children }) {
       }
       if (data.event === "websocket_connected") return;
       addEvent(data);
+
       if (data.event === "telemetry") {
         addLiveTelemetry(data);
         scheduleEnergyRefresh("today");
         return;
       }
+
+      if (data.event === "motion_detected") {
+        setMotionEvents((prev) =>
+          [
+            {
+              created_at: data.motion_timestamp || new Date().toISOString(),
+              device_id: data.device_id,
+              device_name: data.device_name,
+              room: data.room || data.motion_location,
+              camera_id: data.camera_id,
+              camera_name: data.camera_name,
+              motion_detected: true,
+            },
+            ...prev,
+          ].slice(0, 50),
+        );
+      }
+
+      if (data.event === "snapshot_captured" && data.snapshot_id) {
+        setCameraSnapshots((prev) => [
+          { ...data, captured_at: data.captured_at || new Date().toISOString() },
+          ...prev.filter((item) => item.snapshot_id !== data.snapshot_id),
+        ].slice(0, 12));
+      }
+
+      if ((data.event === "recording_started" || data.event === "recording_finished") && data.recording_id) {
+        setCameraRecordings((prev) => {
+          const existing = prev.find((item) => item.recording_id === data.recording_id);
+          const next = {
+            ...(existing || {}),
+            ...data,
+            started_at: data.started_at || existing?.started_at || new Date().toISOString(),
+          };
+          return [
+            next,
+            ...prev.filter((item) => item.recording_id !== data.recording_id),
+          ].slice(0, 12);
+        });
+      }
+
+      if (data.event === "camera_online" || data.event === "camera_offline" || data.event === "camera_updated") {
+        setCameras((prev) =>
+          prev.map((camera) =>
+            camera.camera_id === data.camera_id
+              ? {
+                  ...camera,
+                  status: data.status || (data.event === "camera_online" ? "online" : camera.status),
+                  status_reason: data.status_reason ?? camera.status_reason,
+                  last_seen: data.last_seen || camera.last_seen,
+                }
+              : camera,
+          ),
+        );
+      }
+
+      if (data.event === "camera_deleted") {
+        setCameras((prev) => prev.filter((camera) => camera.camera_id !== data.camera_id));
+      }
+
+      if (data.event === "command_completed") {
+        // Hardware confirmed execution — update device state for real now
+        const deviceId = data.device_id;
+        const newState = data.state;
+        setDevices((prev) =>
+          prev.map((device) =>
+            device.device_id === deviceId
+              ? {
+                  ...device,
+                  state: newState,
+                  ...(data.is_online !== undefined && { is_online: Boolean(data.is_online) }),
+                  ...(data.presence_label && { presence_label: data.presence_label }),
+                }
+              : device,
+          ),
+        );
+        setCommandsByDevice((prev) => {
+          const existing = prev[deviceId] || [];
+          return {
+            ...prev,
+            [deviceId]: existing.map((cmd) =>
+              cmd.command_id === data.command_id
+                ? { ...cmd, status: "executed" }
+                : cmd,
+            ),
+          };
+        });
+        const actionLabel = newState === "ON" ? "turned ON" : "turned OFF";
+        toast(`${data.device_name} ${actionLabel} — confirmed by hardware`, "success");
+        return;
+      }
+
+      if (data.event === "command_created") {
+        // Already tracked optimistically in sendCommand(); no full refresh needed.
+        return;
+      }
+
       if (data.event !== "heartbeat") {
         refreshAll(undefined, { force: true });
       }
@@ -529,7 +739,7 @@ export function AppProvider({ children }) {
         }
       }, 4000);
     };
-  }, [addEvent, addLiveTelemetry, scheduleEnergyRefresh, refreshAll, token, closeSocket]);
+  }, [addEvent, addLiveTelemetry, scheduleEnergyRefresh, refreshAll, token, closeSocket, toast]);
 
   const handleVoiceCommand = useCallback(
     async (spokenText) => {
@@ -694,6 +904,10 @@ export function AppProvider({ children }) {
     setCurrentUser(null);
     setDevices([]);
     setDashboard({});
+    setCameras([]);
+    setCameraSnapshots([]);
+    setCameraRecordings([]);
+    setSchedules([]);
     setEnergySummary(null);
     setMotionEvents([]);
     setCommandsByDevice({});
@@ -779,10 +993,25 @@ export function AppProvider({ children }) {
         headers: authHeaders(token, { "Content-Type": "application/json" }),
         body: JSON.stringify(payload),
       });
-      setProvisioningLog((prev) => [
-        { id: Date.now(), label: "Device credentials", data },
-        ...prev,
-      ]);
+
+      const entry = {
+        id: Date.now(),
+        type: "device",
+        name: payload.name || payload.device_name || "",
+        label: "Device credentials",
+        data,
+        createdAt: new Date().toISOString(),
+      };
+
+      setProvisioningLog((prev) => {
+        const next = [entry, ...prev];
+        persistProvisioningLog(next);
+        return next;
+      });
+
+      // Open the one-time credentials modal immediately
+      setProvisioningModal(entry);
+
       await refreshAll(token, { force: true });
       toast("Device registered");
     },
@@ -796,13 +1025,138 @@ export function AppProvider({ children }) {
         headers: authHeaders(token, { "Content-Type": "application/json" }),
         body: JSON.stringify(payload),
       });
-      setProvisioningLog((prev) => [
-        { id: Date.now(), label: "ESP module credentials", data },
-        ...prev,
-      ]);
+
+      const entry = {
+        id: Date.now(),
+        type: "esp",
+        name: payload.name || payload.esp_name || "",
+        label: "ESP module credentials",
+        data,
+        createdAt: new Date().toISOString(),
+      };
+
+      setProvisioningLog((prev) => {
+        const next = [entry, ...prev];
+        persistProvisioningLog(next);
+        return next;
+      });
+
+      // Open the one-time credentials modal immediately
+      setProvisioningModal(entry);
+
       await refreshAll(token, { force: true });
       toast("ESP module registered");
       return data;
+    },
+    [token, refreshAll, toast],
+  );
+
+  const registerCamera = useCallback(
+    async (payload) => {
+      const data = await api("/cameras/register", {
+        method: "POST",
+        headers: authHeaders(token, { "Content-Type": "application/json" }),
+        body: JSON.stringify(payload),
+      });
+
+      const entry = {
+        id: Date.now(),
+        type: "camera",
+        name: payload.camera_name || "",
+        label: "Camera credentials",
+        data,
+        createdAt: new Date().toISOString(),
+      };
+
+      setProvisioningLog((prev) => {
+        const next = [entry, ...prev];
+        persistProvisioningLog(next);
+        return next;
+      });
+      setProvisioningModal(entry);
+
+      await refreshAll(token, { force: true });
+      toast("Camera registered");
+      return data;
+    },
+    [token, refreshAll, toast],
+  );
+
+  const updateCamera = useCallback(
+    async (cameraId, payload) => {
+      await api(`/cameras/${cameraId}`, {
+        method: "PATCH",
+        headers: authHeaders(token, { "Content-Type": "application/json" }),
+        body: JSON.stringify(payload),
+      });
+      await refreshAll(token, { force: true });
+      toast("Camera updated");
+    },
+    [token, refreshAll, toast],
+  );
+
+  const deleteCamera = useCallback(
+    async (cameraId) => {
+      await api(`/cameras/${cameraId}`, {
+        method: "DELETE",
+        headers: authHeaders(token),
+      });
+      await refreshAll(token, { force: true });
+      toast("Camera deleted");
+    },
+    [token, refreshAll, toast],
+  );
+
+  const uploadCameraSnapshot = useCallback(
+    async (cameraId, imageBase64, payload = {}) => {
+      const data = await api(`/cameras/${cameraId}/snapshot`, {
+        method: "POST",
+        headers: authHeaders(token, { "Content-Type": "application/json" }),
+        body: JSON.stringify({
+          image_base64: imageBase64,
+          reason: payload.reason || "manual",
+          motion_device_id: payload.motion_device_id || null,
+        }),
+      });
+      setCameraSnapshots((prev) => [
+        data,
+        ...prev.filter((item) => item.snapshot_id !== data.snapshot_id),
+      ].slice(0, 12));
+      return data;
+    },
+    [token],
+  );
+
+  const uploadCameraRecording = useCallback(
+    async (cameraId, videoBase64, payload = {}) => {
+      const data = await api(`/cameras/${cameraId}/recording`, {
+        method: "POST",
+        headers: authHeaders(token, { "Content-Type": "application/json" }),
+        body: JSON.stringify({
+          video_base64: videoBase64,
+          mime_type: payload.mime_type || "video/webm",
+          duration_seconds: payload.duration_seconds || null,
+          motion_device_id: payload.motion_device_id || null,
+          trigger_reason: payload.trigger_reason || "manual",
+        }),
+      });
+      setCameraRecordings((prev) => [
+        data,
+        ...prev.filter((item) => item.recording_id !== data.recording_id),
+      ].slice(0, 12));
+      return data;
+    },
+    [token],
+  );
+
+  const reconnectCamera = useCallback(
+    async (cameraId) => {
+      await api(`/cameras/${cameraId}/reconnect`, {
+        method: "POST",
+        headers: authHeaders(token),
+      });
+      await refreshAll(token, { force: true });
+      toast("Camera reconnect attempted");
     },
     [token, refreshAll, toast],
   );
@@ -834,13 +1188,14 @@ export function AppProvider({ children }) {
 
   const createScene = useCallback(
     async (payload) => {
-      await api("/scenes", {
+      const data = await api("/scenes", {
         method: "POST",
         headers: authHeaders(token, { "Content-Type": "application/json" }),
         body: JSON.stringify(payload),
       });
-      await refreshAll();
+      await refreshAll(token, { force: true });
       toast("Scene created");
+      return data;
     },
     [token, refreshAll, toast],
   );
@@ -852,7 +1207,7 @@ export function AppProvider({ children }) {
         headers: authHeaders(token, { "Content-Type": "application/json" }),
         body: JSON.stringify(payload),
       });
-      await refreshAll();
+      await refreshAll(token, { force: true });
       toast("Scene updated");
     },
     [token, refreshAll, toast],
@@ -864,10 +1219,98 @@ export function AppProvider({ children }) {
         method: "DELETE",
         headers: authHeaders(token),
       });
-      await refreshAll();
+      await refreshAll(token, { force: true });
       toast("Scene deleted");
     },
     [token, refreshAll, toast],
+  );
+
+  const createSchedule = useCallback(
+    async (payload) => {
+      await api("/schedules", {
+        method: "POST",
+        headers: authHeaders(token, { "Content-Type": "application/json" }),
+        body: JSON.stringify(payload),
+      });
+      await refreshAll(token, { force: true });
+      toast("Schedule created");
+    },
+    [token, refreshAll, toast],
+  );
+
+  const updateSchedule = useCallback(
+    async (scheduleId, payload) => {
+      await api(`/schedules/${scheduleId}`, {
+        method: "PATCH",
+        headers: authHeaders(token, { "Content-Type": "application/json" }),
+        body: JSON.stringify(payload),
+      });
+      await refreshAll(token, { force: true });
+      toast("Schedule updated");
+    },
+    [token, refreshAll, toast],
+  );
+
+  const deleteSchedule = useCallback(
+    async (scheduleId) => {
+      await api(`/schedules/${scheduleId}`, {
+        method: "DELETE",
+        headers: authHeaders(token),
+      });
+      await refreshAll(token, { force: true });
+      toast("Schedule deleted");
+    },
+    [token, refreshAll, toast],
+  );
+
+  const enableSchedule = useCallback(
+    async (scheduleId) => {
+      await api(`/schedules/${scheduleId}/enable`, {
+        method: "POST",
+        headers: authHeaders(token),
+      });
+      await refreshAll(token, { force: true });
+      toast("Schedule enabled");
+    },
+    [token, refreshAll, toast],
+  );
+
+  const disableSchedule = useCallback(
+    async (scheduleId) => {
+      await api(`/schedules/${scheduleId}/disable`, {
+        method: "POST",
+        headers: authHeaders(token),
+      });
+      await refreshAll(token, { force: true });
+      toast("Schedule disabled");
+    },
+    [token, refreshAll, toast],
+  );
+
+  const runSchedule = useCallback(
+    async (scheduleId) => {
+      const data = await api(`/schedules/${scheduleId}/run`, {
+        method: "POST",
+        headers: authHeaders(token),
+      });
+      addEvent({ event: "manual_schedule_run", schedule_id: scheduleId, response: data });
+      await refreshAll(token, { force: true });
+      toast(
+        `Schedule run queued ${data.commands_created} command${data.commands_created === 1 ? "" : "s"}`,
+        "info",
+      );
+      return data;
+    },
+    [token, addEvent, refreshAll, toast],
+  );
+
+  const getScheduleHistory = useCallback(
+    async (scheduleId) => {
+      return api(`/schedules/${scheduleId}/history`, {
+        headers: authHeaders(token),
+      });
+    },
+    [token],
   );
 
   const createRule = useCallback(
@@ -908,21 +1351,69 @@ export function AppProvider({ children }) {
     [token, refreshAll, toast],
   );
 
-  const addKnownPerson = useCallback((person) => {
-    setKnownPeople((prev) => {
-      const next = [person, ...prev];
-      localStorage.setItem(KNOWN_PEOPLE_KEY, JSON.stringify(next));
-      return next;
-    });
-    toast("Person added to security records");
-  }, [toast]);
+  const createKnownPerson = useCallback(
+    async (personData) => {
+      if (!token) return null;
+      try {
+        const data = await api("/known-people", {
+          method: "POST",
+          headers: authHeaders(token, { "Content-Type": "application/json" }),
+          body: JSON.stringify(personData),
+        });
+        setKnownPeople((prev) => [data, ...prev]);
+        toast("Person added to security records");
+        return data;
+      } catch (error) {
+        toast(error.message, "error");
+        return null;
+      }
+    },
+    [token, toast],
+  );
 
-  const removeKnownPerson = useCallback((id) => {
-    setKnownPeople((prev) => {
-      const next = prev.filter((p) => p.id !== id);
-      localStorage.setItem(KNOWN_PEOPLE_KEY, JSON.stringify(next));
-      return next;
-    });
+  const updateKnownPerson = useCallback(
+    async (personId, personData) => {
+      if (!token) return;
+      try {
+        const data = await api(`/known-people/${personId}`, {
+          method: "PATCH",
+          headers: authHeaders(token, { "Content-Type": "application/json" }),
+          body: JSON.stringify(personData),
+        });
+        setKnownPeople((prev) => prev.map((p) => (p.person_id === personId ? { ...p, ...data } : p)));
+        toast("Person updated");
+        return data;
+      } catch (error) {
+        toast(error.message, "error");
+      }
+    },
+    [token, toast],
+  );
+
+  const deleteKnownPerson = useCallback(
+    async (personId) => {
+      if (!token) return;
+      try {
+        await api(`/known-people/${personId}`, {
+          method: "DELETE",
+          headers: authHeaders(token),
+        });
+        setKnownPeople((prev) => prev.filter((p) => p.person_id !== personId));
+        toast("Person removed");
+      } catch (error) {
+        toast(error.message, "error");
+      }
+    },
+    [token, toast],
+  );
+
+  /** Close the one-time credentials modal. */
+  const closeProvisioningModal = useCallback(() => setProvisioningModal(null), []);
+
+  /** Clear the full provisioning history from state and localStorage. */
+  const clearProvisioningLog = useCallback(() => {
+    setProvisioningLog([]);
+    localStorage.removeItem(PROVISIONING_LOG_KEY);
   }, []);
 
   const runVoiceCommand = useCallback(
@@ -943,7 +1434,6 @@ export function AppProvider({ children }) {
         toast(error.message);
       }
     }
-    localStorage.removeItem(EVENTS_KEY);
     setEvents([]);
   }, [token, toast]);
 
@@ -1009,6 +1499,8 @@ export function AppProvider({ children }) {
     const rooms = new Set(devices.map((d) => d.room || "Unassigned"));
     const online = devices.filter((d) => d.is_online).length;
     const offline = Math.max(devices.length - online, 0);
+    const onlineCameras = cameras.filter((camera) => camera.status === "online").length;
+    const offlineCameras = Math.max(cameras.length - onlineCameras, 0);
     const homeStatusText = !devices.length
       ? "No Devices Registered"
       : offline === 0 ? "All Devices Online" : `${offline} Device${offline === 1 ? "" : "s"} Offline`;
@@ -1028,13 +1520,16 @@ export function AppProvider({ children }) {
       total: devices.length,
       online,
       offline,
+      cameraTotal: cameras.length,
+      onlineCameras,
+      offlineCameras,
       alerts,
       homeStatusText,
       safeStatusTitle,
       safeStatusText,
       energyLoad,
     };
-  }, [devices, alerts]);
+  }, [devices, cameras, alerts]);
 
   const roomEntries = useMemo(() => buildRoomEntries(dashboard), [dashboard]);
   const selectedRoom = roomEntries[0]?.name ?? "Rooms";
@@ -1049,9 +1544,7 @@ export function AppProvider({ children }) {
     const prune = () => {
       setEvents((prev) => {
         const next = pruneEvents(prev);
-        if (next.length !== prev.length) {
-          localStorage.setItem(EVENTS_KEY, JSON.stringify(next));
-        }
+        void next;
         return next;
       });
     };
@@ -1100,12 +1593,19 @@ export function AppProvider({ children }) {
     devices,
     espModules,
     dashboard,
+    cameras,
+    cameraSnapshots,
+    cameraRecordings,
     scenes,
+    schedules,
     rules,
     events,
     commandsByDevice,
     knownPeople,
     provisioningLog,
+    provisioningModal,
+    closeProvisioningModal,
+    clearProvisioningLog,
     toasts,
     backendStatus,
     socketStatus,
@@ -1128,7 +1628,14 @@ export function AppProvider({ children }) {
     refreshAll,
     loadEvents,
     loadEspModules,
+    loadCameras,
+    loadCameraSnapshots,
+    loadCameraRecordings,
+    loadSchedules,
     loadTelemetryHistory,
+    cameraStreamUrl,
+    cameraSnapshotUrl,
+    cameraRecordingUrl,
     sendCommand,
     runScene,
     runVoiceCommand,
@@ -1142,16 +1649,30 @@ export function AppProvider({ children }) {
     resetPassword,
     registerEspModule,
     registerDevice,
+    registerCamera,
+    updateCamera,
+    deleteCamera,
+    uploadCameraSnapshot,
+    uploadCameraRecording,
+    reconnectCamera,
     updateDevice,
     deleteDevice,
     createScene,
     updateScene,
     deleteScene,
+    createSchedule,
+    updateSchedule,
+    deleteSchedule,
+    enableSchedule,
+    disableSchedule,
+    runSchedule,
+    getScheduleHistory,
     createRule,
     updateRule,
     deleteRule,
-    addKnownPerson,
-    removeKnownPerson,
+    createKnownPerson,
+    updateKnownPerson,
+    deleteKnownPerson,
     clearEvents,
     initTelemetryCharts,
     tempCanvasRef,

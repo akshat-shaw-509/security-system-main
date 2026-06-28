@@ -6,6 +6,11 @@ class EspModuleCreate(BaseModel):
     location: str | None = None
 
 
+class EspProvisionRequest(BaseModel):
+    chip_id: str
+    firmware_version: str | None = None
+
+
 class EspModuleUpdate(BaseModel):
     name: str | None = None
     location: str | None = None

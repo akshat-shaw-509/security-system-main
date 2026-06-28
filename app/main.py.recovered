@@ -1,0 +1,4448 @@
+.
+
+========================
+
+Zero-touch provisioning flow:
+1. Read CHIP_ID and SMART_HOME_API_BASE from environment variables.
+2. Load saved ESP credentials from esp_credentials.json if present.
+3. Authenticate with POST /esp/auth.
+4. If authentication fails, call POST /esp/provision with CHIP_ID.
+5. Fetch child devices from POST /esp/devices.
+6. Loop: heartbeat every device, send telemetry for sensor devices, and execute
+   queued commands.
+
+Environment variables:
+SMART_HOME_API_BASE   API URL, default http://127.0.0.1:8001
+CHIP_ID               Simulated MAC/ID, default AA:BB:CC:DD:EE:FF
+FIRMWARE_VERSION      Reported version, default 1.0.0
+CREDENTIALS_FILE      Storage path, default esp_credentials.json
+"""
+
+import json
+import os
+import random
+import sys
+import time
+
+import requests
+
+
+API_BASE = os.getenv("SMART_HOME_API_BASE", "http://127.0.0.1:8001")
+CHIP_ID = os.getenv("CHIP_ID", "AA:BB:CC:DD:EE:FF")
+FIRMWARE_VERSION = os.getenv("FIRMWARE_VERSION", "1.0.0")
+CREDENTIALS_FILE = os.getenv("CREDENTIALS_FILE", "esp_credentials.json")
+
+LOOP_DELAY_SECONDS = 5
+DEVICE_REFRESH_INTERVAL_SECONDS = 30
+
+SENSOR_TYPES = {
+    "sensor",
+    "motion_sensor",
+    "temperature_sensor",
+    "humidity_sensor",
+}
+
+
+def load_credentials() -> dict:
+    if not os.path.exists(CREDENTIALS_FILE):
+        return {}
+    try:
+        with open(CREDENTIALS_FILE, "r", encoding="utf-
+):
+    sch
+
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    db: Session = Depends(get_db),
+):
+    credentials_exception = HTTPException(
+        status_code=401,
+        detail="Could not validate credentials",
+    )
+
+    token = credentials.credentials
+
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+
+    user = db.query(models.User).filter(models.User.username == username).first()
+    if user is None:
+        raise credentials_exception
+
+    return user
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    await manager.broadcast({
+        "event": "schedule_updated",
+        "schedule_id": schedule["schedule_id"],
+        "schedule_name": schedule["name"],
+        "enabled": True,
+    })
+    return schedule
+
+
+@router.post("/{schedule_id}/disable", response_model=ScheduleOut)
+async def disable_schedule(
+    schedule_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    schedule = schedule_service.disable_schedule(db, schedule_id, _org(current_user))
+    await manager.broadcast({
+        "event": "schedule_updated",
+        "schedule_id": schedule["schedule_id"],
+        "schedule_name": schedule["name"],
+        "enabled": False,
+    })
+    return schedule
+
+
+@router.post("/{schedule_id}/run", response_model=ScheduleRunOut)
+async def run_schedule_now(
+    schedule_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    result = schedule_service.run_schedule_now(db, schedule_id, _org(current_user))
+    await manager.broadcast({
+        "event": "schedule_executed",
+        "schedule_id": result["schedule_id"],
+        "scene_id": result["scene_id"],
+        "commands_created": result["commands_created"],
+        "triggered_by": "manual",
+    })
+    return result
+
+
+@router.get("/{schedule_id}/history", response_model=list[ScheduleExecutionOut])
+def get_schedule_history(
+    schedule_id: int,
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    return schedule_service.list_executions(db, schedule_id, _org(current_user), limit)
+
+) -> None:
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                results = run_due_schedules(db)
+            finally:
+                db.close()
+
+            if broadcast:
+                for result in results:
+                    await broadcast({
+                        "event": "schedule_executed",
+                        "schedule_id": result.get("schedule_id"),
+                        "schedule_name": result.get("schedule_name"),
+                        "scene_id": result.get("scene_id"),
+                        "success": result.get("success"),
+                        "commands_created": result.get("commands_created"),
+                        "triggered_by": "scheduler",
+                    })
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Schedule runner tick failed")
+        await asyncio.sleep(TICK_SECONDS)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    print(f"  Firmware : {FIRMWARE_VERSION}")
+    print("  Press CTRL+C to stop")
+    print("=" * 60)
+
+    esp_uid, esp_token, auth_token = boot()
+
+    devices: list[dict] = []
+    last_refresh = 0
+
+    while True:
+        now = time.time()
+
+        if now - last_refresh >= DEVICE_REFRESH_INTERVAL_SECONDS:
+            new_token = authenticate(esp_uid, esp_token)
+
+            if not new_token:
+                print("[LOOP] Auth failed; re-provisioning ...")
+                clear_credentials()
+                esp_uid, esp_token, new_token = boot()
+
+            auth_token = new_token
+            fresh_devices = fetch_devices(esp_uid, esp_token, auth_token)
+
+            if fresh_devices:
+                uid_to_state = {device["device_uid"]: device.get("_state") for device in devices}
+                for device in fresh_devices:
+                    saved_state = uid_to_state.get(device["device_uid"])
+                    if saved_state:
+                        device["_state"] = saved_state
+                devices = fresh_devices
+
+            last_refresh = now
+
+        if not devices:
+            print("[LOOP] No devices assigned yet; waiting ...")
+            time.sleep(LOOP_DELAY_SECONDS)
+            continue
+
+        print(f"\n[LOOP] Tick - {len(devices)} device(s)")
+
+        for device in devices:
+            heartbeat(device)
+
+        for device in devices:
+            if device.get("device_type", "").lower() in SENSOR_TYPES:
+                send_telemetry(device)
+
+        for device in devices:
+            fetch_and_execute_commands(device)
+
+        print_states(devices)
+        time.sleep(LOOP_DELAY_SECONDS)
+
+
+if __name__ == "__main__":
+    main()
+
+    return {
+        "schedule_id": schedule_id,
+        "scene_id": schedule.scene_id,
+        "commands_created": result["commands_created"],
+        "message": f"Scene executed immediately - {result['commands_created']} command(s) queued",
+    }
+
+
+def list_executions(
+    db: Session,
+    schedule_id: int,
+    organization_id: int,
+    limit: int = 50,
+) -> list[dict]:
+    _get_or_404(db, schedule_id, organization_id)
+    executions = db.query(models.ScheduleExecution).filter(
+        models.ScheduleExecution.schedule_id == schedule_id,
+        models.ScheduleExecution.organization_id == organization_id,
+    ).order_by(models.ScheduleExecution.executed_at.desc()).limit(limit).all()
+    return [_serialize_execution(execution) for execution in executions]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    return {
+        "camera_id": camera.id,
+        "camera_name": camera.camera_name,
+        "room": camera.room,
+        "esp_id": camera.esp_module_id,
+        "esp_name": camera.esp_module.name if camera.esp_module else None,
+        "camera_type": camera.camera_type,
+        "status": "online" if presence["is_online"] else "offline",
+        "status_reason": camera.status_reason,
+        "last_seen": presence["last_seen"],
+        "presence_age_seconds": presence["presence_age_seconds"],
+        "presence_label": presence["presence_label"],
+        "has_stream": bool(camera.stream_url),
+        "has_snapshot": bool(camera.snapshot_url),
+        "stream_path": f"/cameras/{camera.id}/stream" if camera.stream_url else None,
+        "snapshot_path": f"/cameras/{camera.id}/snapshot",
+        "created_at": camera.created_at,
+        "updated_at": camera.updated_at,
+    }
+
+
+def serialize_camera_snapshot(snapshot: models.CameraSnapshot) -> dict:
+    return {
+        "snapshot_id": snapshot.id,
+        "camera_id": snapshot.camera_id,
+        "camera_name": snapshot.camera.camera_name if snapshot.camera else None,
+        "room": snapshot.camera.room if snapshot.camera else None,
+        "motion_device_id": snapshot.motion_device_id,
+        "reason": snapshot.reason,
+        "status": snapshot.status,
+        "error_message": snapshot.error_message,
+        "captured_at": snapshot.captured_at,
+        "image_path": f"/cameras/snapshots/{snapshot.id}/image",
+    }
+
+
+def serialize_camera_recording(recording: models.CameraRecording) -> dict:
+    return {
+        "recording_id": recording.id,
+        "camera_id": recording.camera_id,
+        "camera_name": recording.camera.camera_name if recording.camera else None,
+        "room": recording.camera.room if recording.camera else None,
+        "motion_device_id": recording.motion_device_id,
+        "trigger_reason": recording.trigger_reason,
+        "status": recording.status,
+        "started_at": recording.started_at,
+        "ended_at": recording.ended_at,
+        "duration_seconds": recording.duration_seconds,
+        "error_message": recording.error_message,
+        "recording_path": f"/cameras/recordings/{recording.id}/media" if recording.file_path or recording.external_url else None,
+    }
+
+
+def schema_payload(schema) -> dict:
+    if hasattr(schema, "model_dump"):
+        return schema.model_dump(exclude_unset=True)
+    return schema.dict(exclude_unset=True)
+
+
+def current_user_from_query_token(access_token: str, db: Session) -> models.User:
+    credentials_exception = HTTPException(
+        status_code=401,
+        detail="Could not validate credentials",
+    )
+    try:
+        payload = jwt.decode(access_token, SECRET_KEY, algorithms=[ALGORITHM])
+        username = payload.get("sub")
+        if not username or str(username).startswith("esp:"):
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+
+    user = db.query(models.User).filter(models.User.username == username).first()
+    if not user:
+        raise credentials_exce
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Profile photo upload failed: {exc}")
+    profile.updated_at = datetime.utcnow()
+    record_event(
+        db,
+        "profile_photo_updated",
+        current_user.organization_id,
+        f"{current_user.username} updated profile photo",
+        {"user_id": current_user.id},
+    )
+    db.commit()
+    db.refresh(profile)
+
+    payload = serialize_profile(profile, current_user)
+    await manager.broadcast({"event": "profile_updated", "user_id": current_user.id, "profile": payload})
+    return payload
+
+
+@app.get("/profile/photo")
+def get_profile_photo(
+    access_token: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    current_user = current_user_from_query_token(access_token, db)
+    profile = ensure_user_profile(db, current_user)
+    db.commit()
+    if not profile.photo_path or not Path(profile.photo_path).exists():
+        raise HTTPException(status_code=404, detail="Profile photo not found")
+    return Response(Path(profile.photo_path).read_bytes(), media_type="image/jpeg")
+
+
+@app.get("/provisioning/history")
+def list_provisioning_history(
+    limit: int = 100,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    rows = db.query(models.ProvisioningHistory).filter(
+        models.ProvisioningHistory.organization_id == current_user.organization_id,
+    ).order_by(models.ProvisioningHistory.created_at.desc()).limit(min(limit, 200)).all()
+    return [serialize_provisioning_history(row) for row in rows]
+
+
+@app.post("/provisioning/history")
+async def add_provisioning_history(
+    request: ProvisioningHistoryCreate,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = create_provisioning_history(
+        db,
+        current_user.organization_id,
+        request.type,
+        name=request.name,
+        created_by=current_user.id,
+        device_id=request.device_id,
+        esp_module_id=request.esp_module_id,
+        camera_id=request.camera_id,
+        status=request.status,
+        payload=request.payload,
+    )
+    record_event(
+        db,
+        "provisioning_history_created",
+        current_user.organization_id,
+        f"{request.type} provisioning history created",
+        {"history_id": row.id, "type": request.type},
+    )
+    db.commit()
+    db.refresh(row)
+    payload = serialize_provisioning_history(row)
+    await manager.broadcast({"event": "provisioning_history_created", **payload})
+    return payload
+
+
+@app.delete("/provisioning/history")
+async def clear_provisioning_history(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    db.query(models.ProvisioningHistory).filter(
+        models.ProvisioningHistory.organization_id == current_user.organization_id,
+    ).delete(synchronize_session=False)
+    rec
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    ).order_by(models.CameraRecording.started_at.desc()).limit(min(limit, 50)).all()
+    return [serialize_camera_recording(recording) for recording in recordings]
+
+
+@app.get("/cameras/snapshots/{snapshot_id}/image")
+def camera_snapshot_image(
+    snapshot_id: int,
+    access_token: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    current_user = current_user_from_query_token(access_token, db)
+    snapshot = db.query(models.CameraSnapshot).filter(
+        models.CameraSnapshot.id == snapshot_id,
+        models.CameraSnapshot.organization_id == current_user.organization_id,
+    ).first()
+    if not snapshot:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+    if snapshot.file_path and Path(snapshot.file_path).exists():
+        return Response(Path(snapshot.file_path).read_bytes(), media_type="image/jpeg")
+    if snapshot.external_url:
+        response = requests.get(validate_camera_remote_url(snapshot.external_url), timeout=8)
+        response.raise_for_status()
+        return Response(response.content, media_type=response.headers.get("content-type", "image/jpeg"))
+    raise HTTPException(status_code=404, detail=snapshot.error_message or "Snapshot image is unavailable")
+
+
+@app.get("/cameras/recordings/{recording_id}/media")
+def camera_recording_media(
+    recording_id: int,
+    access_token: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    current_user = current_user_from_query_token(access_token, db)
+    recording = db.query(models.CameraRecording).filter(
+        models.CameraRecording.id == recording_id,
+        models.CameraRecording.organization_id == current_user.organization_id,
+    ).first()
+    if not recording:
+        raise HTTPException(status_code=404, detail="Recording not found")
+    if recording.file_path and Path(recording.file_path).exists():
+        suffix = Path(recording.file_path).suffix.lower()
+        media_type = (
+            "multipart/x-mixed-replace"
+            if suffix in {".mjpeg", ".mjpg"}
+            else "video/webm"
+            if suffix == ".webm"
+            else "video/mp4"
+        )
+        return Response(Path(recording.file_path).read_bytes(), media_type=media_type)
+    if recording.external_url:
+        response = requests.get(validate_camera_remote_url(recording.external_url), stream=True, timeout=8)
+        response.raise_for_status()
+        return StreamingResponse(
+            response.iter_content(chunk_size=1024 * 64),
+            media_type=response.headers.get("content-type", "video/mp4"),
+        )
+    raise HTTPException(status_code=404, detail=recording.error_message or "Recording media is unavailable")
+
+
+@app.get("/cameras/{camera_id}")
+def get_camera(
+    camera_id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    camera = get_camera_or_404(db, camera_id, current_user.organization_id)
+    return serialize_camera(camera)
+
+
+@app.patch("/cameras/{cam
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    })
+
+    return {"message": "Device deleted"}
+
+
+@app.post("/devices/auth")
+def authenticate_device(device_data: DeviceAuthRequest, db: Session = Depends(get_db)):
+    device = db.query(models.Device).filter(
+        models.Device.device_uid == device_data.device_uid
+    ).first()
+
+    if not device:
+        raise HTTPException(status_code=401, detail="Invalid device UID")
+
+    if not verify_device_token(device, device_data.device_token, db):
+        record_event(
+            db,
+            "device_auth_failed",
+            device.organization_id,
+            f"Invalid token for {device.name}",
+            {"device_id": device.id, "device_uid": device.device_uid},
+        )
+        db.commit()
+        raise HTTPException(status_code=401, detail="Invalid device token")
+
+    if not device.is_active:
+        raise HTTPException(status_code=403, detail="Device is inactive")
+
+    db.commit()
+    return {
+        "message": "Device authenticated",
+        "device_id": device.id,
+        "device_name": device.name
+    }
+
+
+@app.post("/devices/heartbeat")
+async def device_heartbeat(
+    telemetry: TelemetryCreate,
+    db: Session = Depends(get_db)
+):
+    device = db.query(models.Device).filter(
+        models.Device.device_uid == telemetry.device_uid
+    ).first()
+
+    if not device or not verify_device_token(device, telemetry.device_token, db):
+        raise HTTPException(status_code=401, detail="Invalid device credentials")
+
+    device.last_seen = datetime.utcnow()
+    db.commit()
+
+    await manager.broadcast({
+        "event": "heartbeat",
+        "device_id": device.id,
+        "device_name": device.name,
+        "last_seen": device.last_seen
+    })
+
+    return {"message": "Heartbeat received"}
+
+
+@app.post("/devices/telemetry")
+async def device_telemetry(
+    telemetry: TelemetryCreate,
+    db: Session = Depends(get_db)
+):
+    device = db.query(models.Device).filter(
+        models.Device.device_uid == telemetry.device_uid
+    ).first()
+
+    if not device or not verify_device_token(device, telemetry.device_token, db):
+        raise HTTPException(status_code=401, detail="Invalid device credentials")
+
+    new_entry = models.DeviceTelemetry(
+        device_id=device.id,
+        organization_id=device.organization_id,
+        temperature=str(telemetry.temperature),
+        humidity=str(telemetry.humidity),
+        motion_detected=telemetry.motion_detected,
+        power_w=str(telemetry.power_w),
+        energy_wh=str(telemetry.energy_wh),
+    )
+
+    device.last_seen = datetime.utcnow()
+    db.add(new_entry)
+
+    triggered_rules = []
+
+    rules = db.query(models.AutomationRule).filter(
+        models.AutomationRule.device_id == device.id,
+        models.AutomationRule.organization_id == device.organization_id,
+        models.Automat
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            "device_name": device.name,
+            "command_id": command.id,
+            "command_type": command.command_type,
+            "payload": command.payload,
+            "status": command.status,
+            "is_online": presence["is_online"],
+            "presence_label": presence["presence_label"],
+        })
+
+    db.commit()
+
+    record_event(
+        db,
+        "scene_executed",
+        current_user.organization_id,
+        f"{scene.name} executed",
+        {"scene_id": scene.id, "scene_name": scene.name, "commands": created_commands},
+    )
+    db.commit()
+
+    await manager.broadcast({
+        "event": "scene_executed",
+        "scene_id": scene.id,
+        "scene_name": scene.name,
+        "commands": created_commands
+    })
+
+    return {
+        "message": "Scene executed",
+        "commands": created_commands
+    }
+
+
+@app.post("/rules")
+async def create_rule(
+    rule: RuleCreate,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    new_rule = models.AutomationRule(
+        name=rule.name,
+        organization_id=current_user.organization_id,
+        device_id=rule.device_id,
+        condition_type=rule.condition_type,
+        operator=rule.operator,
+        value=rule.value,
+        action_device_id=rule.action_device_id,
+        action_command=rule.action_command
+    )
+
+    db.add(new_rule)
+    db.flush()
+    record_event(
+        db,
+        "rule_created",
+        current_user.organization_id,
+        f"{new_rule.name} created",
+        {"rule_id": new_rule.id, "rule_name": new_rule.name},
+    )
+    db.commit()
+    db.refresh(new_rule)
+
+    await manager.broadcast({
+        "event": "rule_created",
+        "rule_id": new_rule.id,
+        "rule_name": new_rule.name
+    })
+
+    return {"message": "Rule created", "rule_id": new_rule.id}
+
+
+@app.get("/rules")
+def list_rules(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    rules = db.query(models.AutomationRule).filter(
+        models.AutomationRule.organization_id == current_user.organization_id
+    ).all()
+
+    return [
+        {
+            "rule_id": rule.id,
+            "name": rule.name,
+            "device_id": rule.device_id,
+            "condition_type": rule.condition_type,
+            "operator": rule.operator,
+            "value": rule.value,
+            "action_device_id": rule.action_device_id,
+            "action_command": rule.action_command,
+            "is_active": rule.is_active,
+        }
+        for rule in rules
+    ]
+
+
+@app.patch("/rules/{rule_id}")
+async def update_rule(
+    rule_id: int,
+    updates: RuleUpdate,
+    current_user: models.User = Depends(get_current_user),
+   
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        models.DeviceCommand.created_at.desc()
+    ).limit(limit).all()
+
+    return commands
+
+
+@app.get("/rules/{rule_id}/activity")
+def get_rule_activity(
+    rule_id: int,
+    limit: int = 50,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    rule = db.query(models.AutomationRule).filter(
+        models.AutomationRule.id == rule_id,
+        models.AutomationRule.organization_id == current_user.organization_id
+    ).first()
+
+    if not rule:
+        raise HTTPException(status_code=404, detail="Rule not found")
+
+    activity = db.query(models.AutomationRuleActivity).filter(
+        models.AutomationRuleActivity.rule_id == rule.id
+    ).order_by(
+        models.AutomationRuleActivity.created_at.desc()
+    ).limit(limit).all()
+
+    return activity
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+
+
+@app.post("/test-broadcast")
+async def test_broadcast():
+    await manager.broadcast({
+        "event": "test",
+        "message": "WebSocket broadcast working"
+    })
+
+    return {"message": "Broadcast sent"}
+
+
+_frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+if _frontend_dist.is_dir():
+    app.mount("/", StaticFiles(directory=_frontend_dist, html=True), name="frontend")
+

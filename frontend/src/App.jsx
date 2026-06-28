@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import LucideIcon from "./components/LucideIcon.jsx";
+import ProvisioningCredentialsModal from "./components/ProvisioningCredentialsModal.jsx";
 import Sidebar from "./components/Sidebar.jsx";
 import Toast from "./components/Toast.jsx";
 import Topbar from "./components/Topbar.jsx";
@@ -9,6 +10,7 @@ import DevicesView from "./views/DevicesView.jsx";
 import EnergyView from "./views/EnergyView.jsx";
 import OverviewView from "./views/OverviewView.jsx";
 import AutomationView from "./views/AutomationView.jsx";
+import ProvisioningHistoryPage from "./views/ProvisioningHistoryPage.jsx";
 import RoomsView from "./views/RoomsView.jsx";
 import SchedulesView from "./views/SchedulesView.jsx";
 import SecurityView from "./views/SecurityView.jsx";
@@ -335,12 +337,13 @@ const VIEWS = {
   security: SecurityView,
   schedules: SchedulesView,
   automation: AutomationView,
+  provisioning: ProvisioningHistoryPage,
   settings: SettingsView,
   access: AccessView,
 };
 
 function Dashboard() {
-  const { currentView } = useApp();
+  const { currentView, provisioningModal, closeProvisioningModal } = useApp();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const View = VIEWS[currentView] || OverviewView;
 
@@ -388,6 +391,12 @@ function Dashboard() {
         <View />
       </main>
       <Toast />
+      {provisioningModal ? (
+        <ProvisioningCredentialsModal
+          credential={provisioningModal}
+          onClose={closeProvisioningModal}
+        />
+      ) : null}
     </div>
   );
 }

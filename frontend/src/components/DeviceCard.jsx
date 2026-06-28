@@ -6,6 +6,8 @@ export default function DeviceCard({ device, onCommand, commands = [] }) {
   const isSensor = device.device_type === "sensor";
   const stateLabel = isSensor ? String(device.state || "ACTIVE").toUpperCase() : isOn ? "ON" : "OFF";
   const latestCommand = commands[0];
+  const isPending = latestCommand &&
+    (latestCommand.status === "pending" || latestCommand.status === "delivered");
   const presenceLabel = device.presence_label || (device.is_online ? "Live now" : "Offline");
 
   return (
@@ -50,9 +52,15 @@ export default function DeviceCard({ device, onCommand, commands = [] }) {
           <span>{presenceLabel}</span>
           {device.room ? <span>{device.room}</span> : null}
         </div>
-        {latestCommand ? (
+        {isPending ? (
+          <div className="command-status pending">
+            ⏳ {latestCommand.command_type === "TURN_ON" ? "Turning on" : "Turning off"}… waiting for hardware
+          </div>
+        ) : latestCommand ? (
           <div className={`command-status ${latestCommand.status}`}>
-            Last: {latestCommand.command_type} - {latestCommand.status}
+            {latestCommand.status === "executed"
+              ? `✅ ${latestCommand.command_type === "TURN_ON" ? "Turn On" : "Turn Off"} confirmed`
+              : `${latestCommand.command_type} — ${latestCommand.status}`}
           </div>
         ) : null}
       </div>

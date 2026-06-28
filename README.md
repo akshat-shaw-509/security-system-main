@@ -25,13 +25,20 @@ Open http://localhost:5173 — register, then sign in.
 
 ### 3. Hardware / simulator
 
-After registering a device in the UI, copy `device_uid` and `device_token` into `device_simulator.py` (or your firmware), then:
+Run the zero-touch ESP simulator. It provisions itself with `CHIP_ID`, fetches assigned child devices, sends telemetry for sensor devices, and executes queued commands:
 
 ```bash
-python device_simulator.py
+python simulator.py
 ```
 
-The device loop should call:
+Optional environment variables:
+
+- `SMART_HOME_API_BASE` defaults to `http://127.0.0.1:8001`
+- `CHIP_ID` defaults to `AA:BB:CC:DD:EE:FF`
+- `FIRMWARE_VERSION` defaults to `1.0.0`
+- `CREDENTIALS_FILE` defaults to `esp_credentials.json`
+
+The simulator loop calls:
 
 - `POST /devices/heartbeat`
 - `POST /devices/telemetry` (temperature, humidity, motion, **power_w**, energy_wh)

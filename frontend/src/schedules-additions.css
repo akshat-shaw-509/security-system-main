@@ -1,0 +1,424 @@
+/*
+ * schedules-additions.css
+ * ════════════════════════
+ * Styles for new elements in the refactored SchedulesView.
+ * Import this alongside (or append to) your existing schedules stylesheet.
+ * Existing class names (.schedule-row, .schedule-icon, .schedule-actions, etc.)
+ * are preserved and compatible.
+ */
+
+/* ── form layout ─────────────────────────────────────────────────────────── */
+
+.schedule-form-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+}
+
+.schedule-day-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.day-pill {
+  padding: 5px 12px;
+  border-radius: 100px;
+  border: 1.5px solid var(--border, #e2e8f0);
+  background: none;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted, #64748b);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.day-pill.active {
+  background: var(--accent, #3b82f6);
+  border-color: var(--accent, #3b82f6);
+  color: #fff;
+}
+
+.schedule-enabled-row {
+  margin-top: 4px;
+}
+
+.toggle-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary, #475569);
+  user-select: none;
+}
+
+.toggle-input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-track {
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+  border-radius: 10px;
+  background: var(--border, #e2e8f0);
+  position: relative;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+
+.toggle-track::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.2s;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+
+.toggle-input:checked + .toggle-track {
+  background: var(--accent, #3b82f6);
+}
+
+.toggle-input:checked + .toggle-track::after {
+  transform: translateX(16px);
+}
+
+.toggle-input:focus-visible + .toggle-track {
+  outline: 2px solid var(--accent, #3b82f6);
+  outline-offset: 2px;
+}
+
+.schedule-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 8px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border, #f1f5f9);
+}
+
+.btn-ghost {
+  background: none;
+  border: 1.5px solid var(--border, #e2e8f0);
+  color: var(--text-secondary, #475569);
+}
+
+/* ── schedule card — new elements ────────────────────────────────────────── */
+
+.schedule-row.disabled {
+  opacity: 0.6;
+}
+
+.schedule-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.demo-badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 100px;
+  background: var(--badge-bg, #f1f5f9);
+  color: var(--text-muted, #94a3b8);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.schedule-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.meta-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 100px;
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--badge-bg, #f1f5f9);
+  color: var(--text-secondary, #475569);
+}
+
+.meta-pill svg {
+  flex-shrink: 0;
+}
+
+.schedule-scene-ref {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-muted, #94a3b8);
+  margin-top: 5px;
+}
+
+.schedule-timing {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-muted, #94a3b8);
+  margin-top: 5px;
+  flex-wrap: wrap;
+}
+
+.schedule-timing strong {
+  color: var(--text-secondary, #64748b);
+  font-weight: 600;
+}
+
+.schedule-timing .sep {
+  color: var(--border, #e2e8f0);
+}
+
+/* ── tab count badge ─────────────────────────────────────────────────────── */
+
+.tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 10px;
+  background: var(--badge-bg, #f1f5f9);
+  color: var(--text-muted, #94a3b8);
+  font-size: 10px;
+  font-weight: 700;
+  margin-left: 4px;
+}
+
+.schedule-tabs button.active .tab-count {
+  background: var(--accent-light, #dbeafe);
+  color: var(--accent, #3b82f6);
+}
+
+/* ── icon buttons (extended set) ─────────────────────────────────────────── */
+
+.schedule-icon-btn.run {
+  color: var(--success, #16a34a);
+}
+
+.schedule-icon-btn.run:hover:not(:disabled) {
+  background: var(--success-light, #dcfce7);
+  color: var(--success, #16a34a);
+}
+
+.schedule-icon-btn.history {
+  color: var(--text-muted, #94a3b8);
+}
+
+.schedule-icon-btn.history:hover:not(:disabled) {
+  background: var(--badge-bg, #f1f5f9);
+  color: var(--text-secondary, #475569);
+}
+
+/* ── history drawer ──────────────────────────────────────────────────────── */
+
+.schedule-history-drawer {
+  position: fixed;
+  inset-block: 0;
+  right: 0;
+  width: min(380px, 100vw);
+  background: var(--modal-bg, #fff);
+  border-left: 1px solid var(--border, #e2e8f0);
+  box-shadow: -8px 0 32px rgba(0,0,0,0.10);
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.schedule-history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--border, #e2e8f0);
+}
+
+.schedule-history-header h4 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary, #0f172a);
+}
+
+.schedule-history-loading,
+.schedule-history-empty {
+  padding: 24px 20px;
+  font-size: 13px;
+  color: var(--text-muted, #94a3b8);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.schedule-history-list {
+  list-style: none;
+  margin: 0;
+  padding: 12px 0;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.history-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 20px;
+  transition: background 0.12s;
+}
+
+.history-row:hover {
+  background: var(--hover-bg, #f8fafc);
+}
+
+.history-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border, #e2e8f0);
+  flex-shrink: 0;
+  margin-top: 5px;
+}
+
+.history-row.ok .history-dot   { background: var(--success, #22c55e); }
+.history-row.fail .history-dot { background: var(--danger, #ef4444); }
+
+.history-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.history-time {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary, #475569);
+}
+
+.history-scene {
+  font-size: 12px;
+  color: var(--text-muted, #94a3b8);
+}
+
+.history-cmds {
+  font-size: 11px;
+  color: var(--text-muted, #94a3b8);
+}
+
+.history-row.fail .history-cmds {
+  color: var(--danger, #ef4444);
+}
+
+/* ── empty state ─────────────────────────────────────────────────────────── */
+
+.schedules-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 64px 24px;
+  text-align: center;
+  color: var(--text-muted, #94a3b8);
+}
+
+.schedules-empty svg {
+  opacity: 0.4;
+}
+
+.schedules-empty p {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-secondary, #475569);
+}
+
+.schedules-empty span {
+  max-width: 320px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.schedules-empty .btn {
+  margin-top: 8px;
+}
+
+/* ── responsive ──────────────────────────────────────────────────────────── */
+
+@media (max-width: 600px) {
+  .schedule-form-row {
+    grid-template-columns: 1fr;
+  }
+
+  .schedule-history-drawer {
+    width: 100vw;
+  }
+
+  .schedule-timing {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+  }
+
+  .schedule-timing .sep {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toggle-track,
+  .toggle-track::after,
+  .day-pill,
+  .schedule-icon-btn,
+  .schedule-row {
+    transition: none;
+  }
+}
+
+.schedule-form.schedule-builder {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 16px;
+}
+
+.schedule-form.schedule-builder .field input,
+.schedule-form.schedule-builder .field select {
+  width: 100%;
+}
+
+.schedule-actions {
+  grid-template-columns: auto 1px repeat(4, 44px);
+}
+
+.history-close {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-muted, #64748b);
+  cursor: pointer;
+}

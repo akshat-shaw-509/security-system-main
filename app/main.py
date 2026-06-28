@@ -1,4 +1,4 @@
-import json
+﻿import json
 import re
 import secrets
 import smtplib
@@ -136,6 +136,16 @@ def ensure_sqlite_schema() -> None:
             conn.execute(text("ALTER TABLE device_telemetry ADD COLUMN power_w VARCHAR DEFAULT '0'"))
         if "energy_wh" not in telemetry_columns:
             conn.execute(text("ALTER TABLE device_telemetry ADD COLUMN energy_wh VARCHAR DEFAULT '0'"))
+
+        # DeviceCommand — columns added for the full IoT command lifecycle
+        command_columns = {
+            row[1]
+            for row in conn.execute(text("PRAGMA table_info(device_commands)")).fetchall()
+        }
+        if "delivered_at" not in command_columns:
+            conn.execute(text("ALTER TABLE device_commands ADD COLUMN delivered_at DATETIME"))
+        if "failure_reason" not in command_columns:
+            conn.execute(text("ALTER TABLE device_commands ADD COLUMN failure_reason TEXT"))
 
 
 ensure_sqlite_schema()
@@ -430,6 +440,8 @@ def verify_device_token(device: models.Device, provided_token: str, db: Session)
             device.device_token = hash_secret(provided_token)
             db.flush()
         return True
+    # [DEBUG] Step 6
+    print(f"[DEBUG] TOKEN VERIFICATION FAILED | device_uid={device.device_uid} | device_id={device.id}")
     return False
 
 
@@ -1011,21 +1023,63 @@ def authenticate_esp(esp_data: EspAuthRequest, db: Session = Depends(get_db)):
     esp_module = authenticate_esp_module(esp_data, db)
     db.commit()
 
+    # [DEBUG]
+    print(f"[ESP AUTH] esp_uid={esp_module.esp_uid} owner_id={esp_module.owner_id} org_id={esp_module.organization_id}")
+
+    owner = None
+    if esp_module.owner_id:
+        owner = db.query(models.User).filter(models.User.id == esp_module.owner_id).first()
+    if not owner:
+        owner = db.query(models.User).filter(
+            models.User.organization_id == esp_module.organization_id,
+        ).first()
+
+    # [DEBUG]
+    print(f"[ESP AUTH] owner={'None — no user in DB for this org' if not owner else owner.username}")
+
+    if not owner:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "ESP authenticated but no user account found for this organization. "
+                "Register a user account in the frontend before starting the simulator."
+            ),
+        )
+
+    access_token = create_access_token({"sub": owner.username})
+
+    # [DEBUG]
+    print(f"[ESP AUTH] jwt_length={len(access_token)} returning access_token OK")
+
     return {
         "message": "ESP module authenticated",
         **serialize_esp_module(esp_module),
         "devices": [serialize_child_device(device) for device in esp_module.devices],
+        "access_token": access_token,
     }
 
 
 @app.post("/esp/devices")
 def list_esp_child_devices(esp_data: EspAuthRequest, db: Session = Depends(get_db)):
     esp_module = authenticate_esp_module(esp_data, db)
+
+    print("\n========== ESP DEVICES ==========")
+    print("ESP MODULE:", esp_module.id)
+
+    devices = list(esp_module.devices)
+
+    for d in devices:
+        print(
+            f"id={d.id} "
+            f"name={d.name} "
+            f"esp_module_id={d.esp_module_id}"
+        )
+
     db.commit()
 
     return {
         "esp": serialize_esp_module(esp_module),
-        "devices": [serialize_child_device(device) for device in esp_module.devices],
+        "devices": [serialize_child_device(device) for device in devices],
     }
 
 
@@ -1069,14 +1123,38 @@ def provision_esp_child_device_tokens(esp_data: EspAuthRequest, db: Session = De
 @app.post("/esp/commands")
 async def fetch_esp_commands(esp_data: EspAuthRequest, db: Session = Depends(get_db)):
     esp_module = authenticate_esp_module(esp_data, db)
+
+    # [DEBUG] ESP-level polling
+    print(f"\n[DEBUG /esp/commands] esp_id={esp_module.id} esp_uid={esp_module.esp_uid} org={esp_module.organization_id}")
+
+    _all_pending = db.query(models.DeviceCommand).filter(
+        models.DeviceCommand.status == "pending"
+    ).all()
+    print(f"[DEBUG /esp/commands] ALL PENDING: {[(c.id, c.device_id) for c in _all_pending]}")
+
+    _esp_devices = db.query(models.Device).filter(
+        models.Device.esp_module_id == esp_module.id
+    ).all()
+    print(f"[DEBUG /esp/commands] Devices linked to this ESP: {[(d.id, d.device_uid) for d in _esp_devices]}")
+
+    _unlinked = db.query(models.Device).filter(
+        models.Device.organization_id == esp_module.organization_id,
+        models.Device.esp_module_id == None,
+    ).all()
+    if _unlinked:
+        print(f"[DEBUG /esp/commands] WARNING devices with esp_module_id=NULL: {[(d.id, d.device_uid) for d in _unlinked]}")
+
     commands = db.query(models.DeviceCommand).join(models.Device).filter(
         models.Device.esp_module_id == esp_module.id,
         models.DeviceCommand.status == "pending",
     ).all()
 
+    print(f"[DEBUG /esp/commands] FOUND {len(commands)} command(s) for esp_module_id={esp_module.id}")
+
     result = []
     for cmd in commands:
         cmd.status = "delivered"
+        cmd.delivered_at = datetime.utcnow()
         result.append({
             "command_id": cmd.id,
             "device_id": cmd.device_id,
@@ -1111,6 +1189,8 @@ async def fetch_esp_commands(esp_data: EspAuthRequest, db: Session = Depends(get
 async def complete_esp_command(
     command_id: int,
     esp_data: EspCommandCompleteRequest,
+    success: bool = True,
+    failure_reason: str = None,
     db: Session = Depends(get_db)
 ):
     esp_module = authenticate_esp_module(esp_data, db)
@@ -1125,14 +1205,68 @@ async def complete_esp_command(
     if esp_data.device_uid and command.device.device_uid != esp_data.device_uid:
         raise HTTPException(status_code=400, detail="Command does not belong to this device")
 
-    command.status = "executed"
-    command.executed_at = datetime.utcnow()
+    if command.status not in ("pending", "delivered"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Command already in terminal state: {command.status}"
+        )
 
-    if command.command_type == "TURN_ON":
-        command.device.current_state = "ON"
-    elif command.command_type == "TURN_OFF":
-        command.device.current_state = "OFF"
-    command.device.last_seen = datetime.utcnow()
+    now = datetime.utcnow()
+
+    if not success:
+        # ── FAILURE PATH ──────────────────────────────────────────────────────
+        # Device.current_state is intentionally NOT changed here.
+        command.status = "failed"
+        command.failure_reason = failure_reason or "ESP reported failure"
+
+        record_event(
+            db,
+            "esp_command_failed",
+            esp_module.organization_id,
+            f"{command.command_type} failed on {command.device.name} via {esp_module.name}",
+            {
+                "esp_id": esp_module.id,
+                "esp_uid": esp_module.esp_uid,
+                "command_id": command.id,
+                "device_id": command.device_id,
+                "device_uid": command.device.device_uid,
+                "failure_reason": command.failure_reason,
+            },
+        )
+        db.commit()
+
+        await manager.broadcast({
+            "event": "command_failed",
+            "command_id": command.id,
+            "device_id": command.device_id,
+            "device_name": command.device.name,
+            "command_type": command.command_type,
+            "failure_reason": command.failure_reason,
+            "status": "failed",
+        })
+
+        return {"message": "Command marked as failed"}
+
+    # ── SUCCESS PATH ──────────────────────────────────────────────────────────
+    command.status = "executed"
+    command.executed_at = now
+
+    # Map command type → new hardware state
+    STATE_MAP = {
+        "TURN_ON": "ON",
+        "TURN_OFF": "OFF",
+        "LOCK": "LOCKED",
+        "UNLOCK": "UNLOCKED",
+        "OPEN": "OPEN",
+        "CLOSE": "CLOSED",
+        "ACTIVATE": "ACTIVE",
+        "DEACTIVATE": "INACTIVE",
+    }
+    new_state = STATE_MAP.get(command.command_type)
+    if new_state:
+        command.device.current_state = new_state   # ← only updated here, after HW confirms
+
+    command.device.last_seen = now
 
     record_event(
         db,
@@ -1145,6 +1279,7 @@ async def complete_esp_command(
             "command_id": command.id,
             "device_id": command.device_id,
             "device_uid": command.device.device_uid,
+            "state": command.device.current_state,
         },
     )
     db.commit()
@@ -1154,6 +1289,8 @@ async def complete_esp_command(
         "command_id": command.id,
         "device_id": command.device_id,
         "device_name": command.device.name,
+        "command_type": command.command_type,
+        "status": "executed",
         "state": command.device.current_state,
         "executed_at": command.executed_at,
     })
@@ -1625,29 +1762,40 @@ async def create_command(
         device_id=device.id,
         organization_id=device.organization_id,
         command_type=command_type,
-        payload=payload
+        payload=payload,
+        status="pending",
     )
 
-    if command_type == "TURN_ON":
-        device.current_state = "ON"
-    elif command_type == "TURN_OFF":
-        device.current_state = "OFF"
-    device.last_seen = datetime.utcnow()
+    # NOTE: device.current_state is intentionally NOT updated here.
+    # It will only be updated inside the command-completion endpoint once
+    # the ESP/hardware sends back a successful acknowledgement.
 
     db.add(command)
     db.flush()
+
+    # [DEBUG] Step 1
+    print(
+        f"\n---------------------------------\n"
+        f"COMMAND CREATED\n"
+        f"command_id:        {command.id}\n"
+        f"device.id:         {device.id}\n"
+        f"device.device_uid: {device.device_uid}\n"
+        f"organization_id:   {device.organization_id}\n"
+        f"status:            {command.status}\n"
+        f"---------------------------------\n"
+    )
+
     presence = device_presence(device)
     record_event(
         db,
         "command_created",
         current_user.organization_id,
-        f"{command_type} sent to {device.name}",
+        f"{command_type} queued for {device.name}",
         {
             "command_id": command.id,
             "device_id": device.id,
             "device_name": device.name,
             "command_type": command_type,
-            "state": device.current_state,
             "status": command.status,
             "is_online": presence["is_online"],
         },
@@ -1662,7 +1810,7 @@ async def create_command(
         "device_name": device.name,
         "command_type": command.command_type,
         "payload": command.payload,
-        "state": device.current_state,
+        "status": command.status,
         "is_online": presence["is_online"],
         "presence_label": presence["presence_label"],
     })
@@ -1671,7 +1819,7 @@ async def create_command(
         "message": "Command created",
         "command_id": command.id,
         "status": command.status,
-        "state": device.current_state,
+        # state is deliberately omitted — it has NOT changed yet
         "is_online": presence["is_online"],
         "presence_label": presence["presence_label"],
         "presence_age_seconds": presence["presence_age_seconds"],
@@ -1684,10 +1832,31 @@ async def fetch_device_commands(
     device_data: DeviceAuthRequest,
     db: Session = Depends(get_db)
 ):
+    # [DEBUG] Step 2
+    print(f"\n[DEBUG /devices/commands] Incoming device_uid: {device_data.device_uid}")
+    print(f"[DEBUG /devices/commands] Incoming device_token (first 8): {device_data.device_token[:8] if device_data.device_token else 'None'}")
+
     device = db.query(models.Device).filter(
         models.Device.device_uid == device_data.device_uid
     ).first()
 
+    # [DEBUG] Step 3
+    if device:
+        print(f"[DEBUG] DB Device ID:       {device.id}")
+        print(f"[DEBUG] DB Device UID:      {device.device_uid}")
+        print(f"[DEBUG] DB Organization:    {device.organization_id}")
+    else:
+        print(f"[DEBUG] No device found in DB for uid={device_data.device_uid}")
+
+    # [DEBUG] Step 4: dump ALL pending commands, no filtering
+    all_pending = db.query(models.DeviceCommand).filter(
+        models.DeviceCommand.status == "pending"
+    ).all()
+    print(f"[DEBUG] ALL PENDING COMMANDS IN DB: {len(all_pending)}")
+    for c in all_pending:
+        print(f"  command_id={c.id} device_id={c.device_id} org={c.organization_id} type={c.command_type} status={c.status}")
+
+    # [DEBUG] Step 6 is handled inside verify_device_token
     if not device or not verify_device_token(device, device_data.device_token, db):
         raise HTTPException(status_code=401, detail="Invalid device credentials")
 
@@ -1696,10 +1865,24 @@ async def fetch_device_commands(
         models.DeviceCommand.status == "pending"
     ).all()
 
+    # [DEBUG] Step 5
+    print(f"[DEBUG] FOUND {len(commands)} COMMAND(S) for device_id={device.id}")
+    if not commands and all_pending:
+        for c in all_pending:
+            # [DEBUG] Step 7
+            if c.device_id != device.id:
+                print(f"[DEBUG] DEVICE ID MISMATCH: authenticated device.id={device.id}, pending command.device_id={c.device_id}")
+            # [DEBUG] Step 8
+            if c.organization_id != device.organization_id:
+                print(f"[DEBUG] ORG MISMATCH: auth org={device.organization_id}, command org={c.organization_id}")
+        if not all_pending:
+            print(f"[DEBUG] WHY: no pending commands exist in DB at all")
+
     result = []
 
     for cmd in commands:
         cmd.status = "delivered"
+        cmd.delivered_at = datetime.utcnow()
         result.append({
             "command_id": cmd.id,
             "command_type": cmd.command_type,
@@ -1731,6 +1914,8 @@ async def fetch_device_commands(
 async def complete_command(
     command_id: int,
     device_data: DeviceAuthRequest,
+    success: bool = True,
+    failure_reason: str = None,
     db: Session = Depends(get_db)
 ):
     device = db.query(models.Device).filter(
@@ -1748,14 +1933,67 @@ async def complete_command(
     if not command:
         raise HTTPException(status_code=404, detail="Command not found")
 
-    command.status = "executed"
-    command.executed_at = datetime.utcnow()
+    if command.status not in ("pending", "delivered"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Command already in terminal state: {command.status}"
+        )
 
-    if command.command_type == "TURN_ON":
-        device.current_state = "ON"
-    elif command.command_type == "TURN_OFF":
-        device.current_state = "OFF"
-    device.last_seen = datetime.utcnow()
+    now = datetime.utcnow()
+
+    if not success:
+        # ── FAILURE PATH ──────────────────────────────────────────────────────
+        # Device.current_state is intentionally NOT changed here.
+        command.status = "failed"
+        command.failure_reason = failure_reason or "Device reported failure"
+
+        record_event(
+            db,
+            "command_failed",
+            device.organization_id,
+            f"{command.command_type} failed on {device.name}",
+            {
+                "command_id": command.id,
+                "device_id": device.id,
+                "device_name": device.name,
+                "command_type": command.command_type,
+                "failure_reason": command.failure_reason,
+            },
+        )
+        db.commit()
+
+        await manager.broadcast({
+            "event": "command_failed",
+            "command_id": command.id,
+            "device_id": device.id,
+            "device_name": device.name,
+            "command_type": command.command_type,
+            "failure_reason": command.failure_reason,
+            "status": "failed",
+        })
+
+        return {"message": "Command marked as failed"}
+
+    # ── SUCCESS PATH ──────────────────────────────────────────────────────────
+    command.status = "executed"
+    command.executed_at = now
+
+    # Map command type → new hardware state
+    STATE_MAP = {
+        "TURN_ON": "ON",
+        "TURN_OFF": "OFF",
+        "LOCK": "LOCKED",
+        "UNLOCK": "UNLOCKED",
+        "OPEN": "OPEN",
+        "CLOSE": "CLOSED",
+        "ACTIVATE": "ACTIVE",
+        "DEACTIVATE": "INACTIVE",
+    }
+    new_state = STATE_MAP.get(command.command_type)
+    if new_state:
+        device.current_state = new_state     # ← only updated here, after HW confirms
+
+    device.last_seen = now
     presence = device_presence(device)
 
     record_event(
@@ -1781,6 +2019,7 @@ async def complete_command(
         "device_id": device.id,
         "device_name": device.name,
         "command_type": command.command_type,
+        "status": "executed",
         "state": device.current_state,
         "is_online": presence["is_online"],
         "presence_label": presence["presence_label"],
@@ -2043,16 +2282,15 @@ async def run_scene(
             device_id=device.id,
             organization_id=device.organization_id,
             command_type=action.command_type,
-            payload=action.payload
+            payload=action.payload,
+            status="pending",
         )
         db.add(command)
         db.flush()
 
-        if action.command_type == "TURN_ON":
-            device.current_state = "ON"
-        elif action.command_type == "TURN_OFF":
-            device.current_state = "OFF"
-        device.last_seen = datetime.utcnow()
+        # NOTE: device.current_state is intentionally NOT updated here.
+        # State is only set inside the command-completion endpoint once
+        # the ESP/hardware sends back a successful acknowledgement.
         presence = device_presence(device)
 
         created_commands.append({
@@ -2061,7 +2299,7 @@ async def run_scene(
             "command_id": command.id,
             "command_type": command.command_type,
             "payload": command.payload,
-            "state": device.current_state,
+            "status": command.status,
             "is_online": presence["is_online"],
             "presence_label": presence["presence_label"],
         })
@@ -2508,7 +2746,21 @@ def get_device_commands(
         models.DeviceCommand.created_at.desc()
     ).limit(limit).all()
 
-    return commands
+    return [
+        {
+            "command_id": cmd.id,
+            "device_id": cmd.device_id,
+            "organization_id": cmd.organization_id,
+            "command_type": cmd.command_type,
+            "payload": cmd.payload,
+            "status": cmd.status,
+            "created_at": cmd.created_at,
+            "delivered_at": cmd.delivered_at,
+            "executed_at": cmd.executed_at,
+            "failure_reason": cmd.failure_reason,
+        }
+        for cmd in commands
+    ]
 
 
 @app.get("/rules/{rule_id}/activity")
@@ -2555,6 +2807,10 @@ async def test_broadcast():
 
     return {"message": "Broadcast sent"}
 
+
+from .extensions import setup
+
+setup(app)
 
 _frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 if _frontend_dist.is_dir():

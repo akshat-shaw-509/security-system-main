@@ -34,10 +34,10 @@ if (Test-Port $backendPort) {
   $py = Get-Command py -ErrorAction SilentlyContinue
   if ($py) {
     $pythonCommand = $py.Source
-    $pythonArgs = @("-3", "-m", "uvicorn", "app.main:app", "--reload", "--port", "$backendPort")
+    $pythonArgs = @("-3", "-m", "uvicorn", "app.main:app", "--port", "$backendPort")
   } else {
     $pythonCommand = "python"
-    $pythonArgs = @("-m", "uvicorn", "app.main:app", "--reload", "--port", "$backendPort")
+    $pythonArgs = @("-m", "uvicorn", "app.main:app", "--port", "$backendPort")
   }
 
   Write-Host "Starting backend on http://127.0.0.1:$backendPort ..."

@@ -103,6 +103,7 @@ export default function AutomationView() {
     scenes,
     devices,
     events,
+    createScene,
     createRule,
     updateRule,
     deleteRule,
@@ -120,9 +121,16 @@ export default function AutomationView() {
   const [conditionValue, setConditionValue] = useState("");
   const [actionDevice, setActionDevice] = useState("");
   const [actionCommand, setActionCommand] = useState("TURN_ON");
+  const [sceneName, setSceneName] = useState("");
+  const [sceneDevice, setSceneDevice] = useState("");
+  const [sceneCommand, setSceneCommand] = useState("TURN_ON");
+  const [scenePayload, setScenePayload] = useState("");
 
   const sensorId = ruleSensor || (devices[0] ? String(devices[0].device_id) : "");
   const actionId = actionDevice || (devices[0] ? String(devices[0].device_id) : "");
+  const sceneDeviceId = sceneDevice || (devices[0] ? String(devices[0].device_id) : "");
+  const canCreate = tab !== "integrations";
+  const createLabel = tab === "scenes" ? "Create Scene" : "Create Rule";
   const usingSampleRules = !rules.length;
   const ruleRows = useMemo(
     () => (rules.length ? rules.map((rule) => ruleViewModel(rule, devices)) : DEMO_RULES),
@@ -138,6 +146,24 @@ export default function AutomationView() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (tab === "scenes") {
+      if (!sceneDeviceId) return;
+      await createScene({
+        name: sceneName,
+        actions: [
+          {
+            device_id: Number(sceneDeviceId),
+            command_type: sceneCommand,
+            payload: scenePayload || null,
+          },
+        ],
+      });
+      setSceneName("");
+      setScenePayload("");
+      setShowCreate(false);
+      return;
+    }
+
     if (!sensorId || !actionId) return;
     await createRule({
       name: ruleName,
@@ -204,118 +230,178 @@ export default function AutomationView() {
                 key={id}
                 type="button"
                 className={tab === id ? "active" : ""}
-                onClick={() => setTab(id)}
+                onClick={() => {
+                  setTab(id);
+                  setShowCreate(false);
+                }}
               >
                 {label}
               </button>
             ))}
           </div>
 
-          <button
-            className="btn automation-add"
-            type="button"
-            onClick={() => setShowCreate((value) => !value)}
-          >
-            <LucideIcon name="Plus" />
-            <span>Create Rule</span>
-          </button>
+          {canCreate ? (
+            <button
+              className="btn automation-add"
+              type="button"
+              onClick={() => setShowCreate((value) => !value)}
+            >
+              <LucideIcon name="Plus" />
+              <span>{createLabel}</span>
+            </button>
+          ) : null}
         </div>
 
-        {showCreate && (
+        {showCreate && canCreate && (
           <section className="automation-create-panel">
             <div className="section-head">
               <div>
-                <h3>Create Rule</h3>
-                <span>Use a sensor condition to trigger a device command</span>
+                <h3>{createLabel}</h3>
+                <span>
+                  {tab === "scenes"
+                    ? "Save a reusable device action that schedules can run later"
+                    : "Use a sensor condition to trigger a device command"}
+                </span>
               </div>
             </div>
             <form className="automation-form" onSubmit={handleSubmit}>
-              <div className="field">
-                <label htmlFor="automationRuleName">Name</label>
-                <input
-                  id="automationRuleName"
-                  value={ruleName}
-                  onChange={(e) => setRuleName(e.target.value)}
-                  placeholder="Motion at entrance"
-                  required
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="automationSensor">Sensor</label>
-                <select
-                  id="automationSensor"
-                  value={sensorId}
-                  onChange={(e) => setRuleSensor(e.target.value)}
-                >
-                  {devices.map((device) => (
-                    <option key={device.device_id} value={device.device_id}>
-                      {device.device_name} ({device.device_type})
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="field">
-                <label htmlFor="automationCondition">Condition</label>
-                <select
-                  id="automationCondition"
-                  value={conditionType}
-                  onChange={(e) => setConditionType(e.target.value)}
-                >
-                  <option value="motion">motion</option>
-                  <option value="temperature">temperature</option>
-                  <option value="humidity">humidity</option>
-                </select>
-              </div>
-              <div className="field compact">
-                <label htmlFor="automationOperator">Op</label>
-                <select
-                  id="automationOperator"
-                  value={conditionOperator}
-                  onChange={(e) => setConditionOperator(e.target.value)}
-                >
-                  <option value="">none</option>
-                  <option value=">">&gt;</option>
-                  <option value="<">&lt;</option>
-                  <option value="=">=</option>
-                </select>
-              </div>
-              <div className="field compact">
-                <label htmlFor="automationValue">Value</label>
-                <input
-                  id="automationValue"
-                  value={conditionValue}
-                  onChange={(e) => setConditionValue(e.target.value)}
-                  placeholder="28"
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="automationActionDevice">Action Device</label>
-                <select
-                  id="automationActionDevice"
-                  value={actionId}
-                  onChange={(e) => setActionDevice(e.target.value)}
-                >
-                  {devices.map((device) => (
-                    <option key={device.device_id} value={device.device_id}>
-                      {device.device_name} ({device.device_type})
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="field">
-                <label htmlFor="automationAction">Action</label>
-                <select
-                  id="automationAction"
-                  value={actionCommand}
-                  onChange={(e) => setActionCommand(e.target.value)}
-                >
-                  <option value="TURN_ON">Turn on</option>
-                  <option value="TURN_OFF">Turn off</option>
-                </select>
-              </div>
+              {tab === "scenes" ? (
+                <>
+                  <div className="field">
+                    <label htmlFor="automationSceneName">Name</label>
+                    <input
+                      id="automationSceneName"
+                      value={sceneName}
+                      onChange={(e) => setSceneName(e.target.value)}
+                      placeholder="Evening lights"
+                      required
+                    />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="automationSceneDevice">Device</label>
+                    <select
+                      id="automationSceneDevice"
+                      value={sceneDeviceId}
+                      onChange={(e) => setSceneDevice(e.target.value)}
+                    >
+                      {devices.map((device) => (
+                        <option key={device.device_id} value={device.device_id}>
+                          {device.device_name} ({device.device_type})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label htmlFor="automationSceneAction">Action</label>
+                    <select
+                      id="automationSceneAction"
+                      value={sceneCommand}
+                      onChange={(e) => setSceneCommand(e.target.value)}
+                    >
+                      <option value="TURN_ON">Turn on</option>
+                      <option value="TURN_OFF">Turn off</option>
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label htmlFor="automationScenePayload">Payload</label>
+                    <input
+                      id="automationScenePayload"
+                      value={scenePayload}
+                      onChange={(e) => setScenePayload(e.target.value)}
+                      placeholder="Optional"
+                    />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="field">
+                    <label htmlFor="automationRuleName">Name</label>
+                    <input
+                      id="automationRuleName"
+                      value={ruleName}
+                      onChange={(e) => setRuleName(e.target.value)}
+                      placeholder="Motion at entrance"
+                      required
+                    />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="automationSensor">Sensor</label>
+                    <select
+                      id="automationSensor"
+                      value={sensorId}
+                      onChange={(e) => setRuleSensor(e.target.value)}
+                    >
+                      {devices.map((device) => (
+                        <option key={device.device_id} value={device.device_id}>
+                          {device.device_name} ({device.device_type})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label htmlFor="automationCondition">Condition</label>
+                    <select
+                      id="automationCondition"
+                      value={conditionType}
+                      onChange={(e) => setConditionType(e.target.value)}
+                    >
+                      <option value="motion">motion</option>
+                      <option value="temperature">temperature</option>
+                      <option value="humidity">humidity</option>
+                    </select>
+                  </div>
+                  <div className="field compact">
+                    <label htmlFor="automationOperator">Op</label>
+                    <select
+                      id="automationOperator"
+                      value={conditionOperator}
+                      onChange={(e) => setConditionOperator(e.target.value)}
+                    >
+                      <option value="">none</option>
+                      <option value=">">&gt;</option>
+                      <option value="<">&lt;</option>
+                      <option value="=">=</option>
+                    </select>
+                  </div>
+                  <div className="field compact">
+                    <label htmlFor="automationValue">Value</label>
+                    <input
+                      id="automationValue"
+                      value={conditionValue}
+                      onChange={(e) => setConditionValue(e.target.value)}
+                      placeholder="28"
+                    />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="automationActionDevice">Action Device</label>
+                    <select
+                      id="automationActionDevice"
+                      value={actionId}
+                      onChange={(e) => setActionDevice(e.target.value)}
+                    >
+                      {devices.map((device) => (
+                        <option key={device.device_id} value={device.device_id}>
+                          {device.device_name} ({device.device_type})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label htmlFor="automationAction">Action</label>
+                    <select
+                      id="automationAction"
+                      value={actionCommand}
+                      onChange={(e) => setActionCommand(e.target.value)}
+                    >
+                      <option value="TURN_ON">Turn on</option>
+                      <option value="TURN_OFF">Turn off</option>
+                    </select>
+                  </div>
+                </>
+              )}
               <button className="btn" type="submit" disabled={!devices.length}>
-                <LucideIcon name="Workflow" />
-                <span>Save Rule</span>
+                <LucideIcon name={tab === "scenes" ? "Clapperboard" : "Workflow"} />
+                <span>{tab === "scenes" ? "Save Scene" : "Save Rule"}</span>
               </button>
             </form>
           </section>
@@ -392,7 +478,11 @@ export default function AutomationView() {
           <section className="automation-list-panel">
             <div className="automation-scene-grid">
               {!filteredScenes.length ? (
-                <div className="empty">No scenes match your search</div>
+                <div className="empty">
+                  {scenes.length
+                    ? "No scenes match your search"
+                    : "Create a scene here, then choose it from the Schedule page."}
+                </div>
               ) : (
                 filteredScenes.map((scene) => {
                   const isRunning = Boolean(runningScenes[scene.scene_id]);

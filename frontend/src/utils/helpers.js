@@ -144,6 +144,7 @@ export const VIEW_TITLES = {
   security: ["Security", "Monitor safety, motion, and home protection."],
   schedules: ["Schedules", "Create scenes for repeatable routines."],
   automation: ["Automation", "Create and manage smart automations."],
+  provisioning: ["Provisioning", "Review device and ESP credentials."],
   settings: ["Settings", "Manage your smart home preferences and system."],
   access: ["Account", "Manage your account and preferences."],
 };
@@ -156,6 +157,7 @@ export const NAV_ITEMS = [
   { id: "security", label: "Security", icon: "ShieldCheck" },
   { id: "schedules", label: "Schedules", icon: "CalendarDays" },
   { id: "automation", label: "Automation", icon: "Sun" },
+  { id: "provisioning", label: "Provisioning", icon: "ReceiptText" },
   { id: "settings", label: "Settings", icon: "Settings" },
 ];
 

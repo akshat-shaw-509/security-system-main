@@ -8,6 +8,9 @@ import { formatKwh, timelineToChartPoints } from "../utils/energyUtils.js";
 export default function OverviewView() {
   const {
     devices,
+    cameras,
+    cameraSnapshots,
+    cameraRecordings,
     rules,
     scenes,
     events,
@@ -19,6 +22,8 @@ export default function OverviewView() {
     startVoice,
     runScene,
     sendCommand,
+    cameraStreamUrl,
+    cameraSnapshotUrl,
   } = useApp();
 
   const chartSeries = useMemo(
@@ -37,9 +42,8 @@ export default function OverviewView() {
   const topDevices = devices.slice(0, 4);
   const topRooms = roomEntries.slice(0, 4);
   const recentEvents = events.slice(0, 3);
-  const cameraDevice = devices.find((device) =>
-    String(`${device.device_name} ${device.device_type}`).toLowerCase().includes("camera"),
-  );
+  const activeCamera = cameras.find((camera) => camera.status === "online" && camera.has_stream) || cameras[0];
+  const recentSnapshot = cameraSnapshots[0];
 
   const quickActions = [
     ["Moon", "Good Night", scenes[0]?.scene_id],
@@ -219,20 +223,30 @@ export default function OverviewView() {
                 <button className="link-btn" type="button" onClick={() => switchView("security")}>View all</button>
               </div>
               <div className="camera-frame">
-                {cameraDevice?.stream_url ? (
-                  <img alt="" src={cameraDevice.stream_url} />
+                {activeCamera?.status === "online" && activeCamera?.has_stream ? (
+                  <img alt={`${activeCamera.camera_name} live stream`} src={cameraStreamUrl(activeCamera)} />
+                ) : recentSnapshot ? (
+                  <img alt="Recent motion snapshot" src={cameraSnapshotUrl(recentSnapshot)} />
                 ) : (
                   <div className="camera-placeholder">
                     <LucideIcon name="Camera" />
-                    <p>Connect a camera device and set its stream URL in device settings.</p>
+                    <p>Provision an ESP32-CAM to stream live surveillance here.</p>
                   </div>
                 )}
-                {cameraDevice?.is_online ? <span>LIVE</span> : null}
+                {activeCamera?.status === "online" ? <span>LIVE</span> : null}
               </div>
               <div className="camera-caption">
-                <span className="green-dot" />
-                {cameraDevice?.device_name || "No camera device"}
-                <small>{cameraDevice?.is_online ? "Live" : "Offline"}</small>
+                <span className={activeCamera?.status === "online" ? "green-dot" : "green-dot offline"} />
+                {activeCamera?.camera_name || "No camera registered"}
+                <small>
+                  {activeCamera
+                    ? `${metrics.onlineCameras} online, ${metrics.offlineCameras} offline`
+                    : "Waiting for camera provisioning"}
+                </small>
+              </div>
+              <div className="camera-caption camera-caption-stack">
+                <small>{cameraSnapshots.length} snapshot{cameraSnapshots.length === 1 ? "" : "s"}</small>
+                <small>{cameraRecordings.length} recording{cameraRecordings.length === 1 ? "" : "s"}</small>
               </div>
             </section>
 
